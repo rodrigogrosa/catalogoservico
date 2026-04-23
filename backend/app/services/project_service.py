@@ -134,7 +134,16 @@ class ProjectService:
             raise ValueError(
                 f"O upload excede o limite configurado de {self.settings.max_upload_size_mb} MB por projeto."
             )
+        logger.info("project_parser_started", extra={"project_name": project_name, "saved_file_count": len(saved_files)})
         parser_result = self.safe_parser.inspect_inputs(saved_files)
+        logger.info(
+            "project_parser_completed",
+            extra={
+                "project_name": project_name,
+                "parser_error_count": len(parser_result.errors),
+                "parser_warning_count": len(parser_result.warnings),
+            },
+        )
         detected = self.format_service.detect_group(saved_files)
         primary_source = self.select_primary_input(saved_files)
         upload_intake = self.build_upload_intake_summary(primary_source, detected, parser_result)

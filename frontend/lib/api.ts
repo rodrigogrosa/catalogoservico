@@ -371,6 +371,21 @@ async function apiFetch(path: string, init?: RequestInit, options?: ApiFetchOpti
   }
 }
 
+async function uploadWithFallback(path: string, init?: RequestInit, timeoutMs = 10 * 60 * 1000): Promise<Response> {
+  try {
+    return await apiFetch(path, init, { timeoutMs });
+  } catch (proxyError) {
+    if (typeof window !== "undefined") {
+      console.warn("[SnapMaker3d] Upload via frontend proxy failed, retrying direct backend", {
+        path,
+        method: init?.method ?? "POST",
+        message: proxyError instanceof Error ? proxyError.message : String(proxyError),
+      });
+    }
+    return apiFetch(path, init, { timeoutMs, directToBackend: true });
+  }
+}
+
 async function parseApiError(response: Response, fallback: string): Promise<Error> {
   const requestId = response.headers.get("x-request-id");
   try {
@@ -411,13 +426,10 @@ export async function uploadProject(files: File[], projectName?: string): Promis
   const form = new FormData();
   files.forEach((file) => form.append("files", file));
   if (projectName) form.append("project_name", projectName);
-  const response = await apiFetch("/projects/upload", {
+  const response = await uploadWithFallback("/projects/upload", {
     method: "POST",
     headers: authHeaders(),
     body: form,
-  }, {
-    directToBackend: typeof window !== "undefined",
-    timeoutMs: 10 * 60 * 1000,
   });
   if (!response.ok) {
     throw await parseApiError(response, "Falha ao subir arquivo");

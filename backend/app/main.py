@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import suppress
+import asyncio
 import logging
 from time import perf_counter
 from uuid import uuid4
@@ -60,6 +61,16 @@ async def request_logging_middleware(request: Request, call_next):
     try:
         response = await call_next(request)
         return response
+    except asyncio.CancelledError:
+        logger.warning(
+            "request_cancelled",
+            extra={
+                "method": request.method,
+                "path": request.url.path,
+                "content_length": request.headers.get("content-length"),
+            },
+        )
+        raise
     finally:
         duration_ms = round((perf_counter() - start) * 1000, 2)
         if response is not None:
