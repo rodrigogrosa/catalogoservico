@@ -373,7 +373,20 @@ async function apiFetch(path: string, init?: RequestInit, options?: ApiFetchOpti
 
 async function uploadWithFallback(path: string, init?: RequestInit, timeoutMs = 10 * 60 * 1000): Promise<Response> {
   try {
-    return await apiFetch(path, init, { timeoutMs });
+    const proxiedResponse = await apiFetch(path, init, { timeoutMs });
+    if (!proxiedResponse.ok && [502, 503, 504].includes(proxiedResponse.status)) {
+      if (typeof window !== "undefined") {
+        const bodySnippet = (await proxiedResponse.clone().text()).slice(0, 240);
+        console.warn("[SnapMaker3d] Upload via frontend proxy returned upstream error, retrying direct backend", {
+          path,
+          method: init?.method ?? "POST",
+          status: proxiedResponse.status,
+          bodySnippet,
+        });
+      }
+      return apiFetch(path, init, { timeoutMs, directToBackend: true });
+    }
+    return proxiedResponse;
   } catch (proxyError) {
     if (typeof window !== "undefined") {
       console.warn("[SnapMaker3d] Upload via frontend proxy failed, retrying direct backend", {
@@ -388,16 +401,23 @@ async function uploadWithFallback(path: string, init?: RequestInit, timeoutMs = 
 
 async function parseApiError(response: Response, fallback: string): Promise<Error> {
   const requestId = response.headers.get("x-request-id");
+  const suffix = requestId ? ` [req ${requestId}]` : "";
   try {
-    const payload = await response.json();
-    const detail = payload.detail ?? fallback;
-    const suffix = requestId ? ` [req ${requestId}]` : "";
-    return new Error(`${detail}${suffix}`);
-  } catch (error) {
-    if (error instanceof Error && error.message !== "Unexpected end of JSON input") {
-      return error;
+    const rawText = await response.text();
+    if (!rawText.trim()) {
+      return new Error(`${fallback}${suffix}`);
     }
-    const suffix = requestId ? ` [req ${requestId}]` : "";
+    try {
+      const payload = JSON.parse(rawText);
+      const detail = payload.detail ?? fallback;
+      return new Error(`${detail}${suffix}`);
+    } catch {
+      const compact = rawText.replace(/\s+/g, " ").trim();
+      const message =
+        compact.length > 180 ? `${compact.slice(0, 177)}...` : compact;
+      return new Error(`${fallback}: ${message}${suffix}`);
+    }
+  } catch (error) {
     return new Error(`${fallback}${suffix}`);
   }
 }
