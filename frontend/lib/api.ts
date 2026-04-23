@@ -312,11 +312,11 @@ export type StoreOAuthAuthorization = {
   instructions: string[];
 };
 
-const BROWSER_API_BASE = "/api/v1";
+const ORIGIN = process.env.NEXT_PUBLIC_BACKEND_ORIGIN ?? "http://localhost:8000";
+const BROWSER_API_BASE = `${ORIGIN}/api/v1`;
 const PUBLIC_API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? BROWSER_API_BASE;
 const SERVER_API_BASE = process.env.SERVER_API_BASE_URL ?? PUBLIC_API_BASE;
 const API_BASE = typeof window === "undefined" ? SERVER_API_BASE : BROWSER_API_BASE;
-const ORIGIN = process.env.NEXT_PUBLIC_BACKEND_ORIGIN ?? "http://localhost:8000";
 
 export type OAuthProviderStatus = {
   provider: string;
@@ -425,7 +425,7 @@ async function parseApiError(response: Response, fallback: string): Promise<Erro
 export function fileUrl(url?: string | null): string | undefined {
   if (!url) return undefined;
   if (url.startsWith("http")) return url;
-  if (typeof window !== "undefined") return url;
+  if (typeof window !== "undefined") return `${ORIGIN}${url}`;
   return `${ORIGIN}${url}`;
 }
 
