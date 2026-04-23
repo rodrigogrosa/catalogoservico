@@ -3,12 +3,13 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 
+import { BrandMark } from "@/components/brand-mark";
 import { useAuth } from "@/components/auth-provider";
 
 type NavItem = {
   label: string;
   href: string;
-  badge?: string;
+  helper: string;
 };
 
 type Props = {
@@ -19,60 +20,64 @@ type Props = {
 };
 
 const navItems: NavItem[] = [
-  { label: "Visão geral", href: "/" },
-  { label: "Novo projeto", href: "/new-project" },
-  { label: "Catálogo", href: "/catalog" },
-  { label: "Login social", href: "/social-login" },
-  { label: "Lojas", href: "/stores" },
-  { label: "Fila", href: "/queue" },
-  { label: "Relatórios", href: "/reports" },
+  { label: "Visão geral", href: "/", helper: "Comando executivo" },
+  { label: "Novo projeto", href: "/new-project", helper: "Entrada e importação" },
+  { label: "Catálogo", href: "/catalog", helper: "Portfólio e vendas" },
+  { label: "Login social", href: "/social-login", helper: "Acesso e identidade" },
+  { label: "Lojas", href: "/stores", helper: "Marketplaces e canais" },
+  { label: "Fila", href: "/queue", helper: "Operação em andamento" },
+  { label: "Relatórios", href: "/reports", helper: "Rastreabilidade" },
 ];
 
-export function AppShell({ children, active = "Visão geral", title = "SnapMaker3d Studio", subtitle }: Props) {
+export function AppShell({ children, active = "Visão geral", title = "Portal EuAchei3D", subtitle }: Props) {
   const { logout, user } = useAuth();
 
   return (
     <main className="min-h-screen">
       <div className="flex min-h-screen w-full">
-        <aside className="hidden w-72 shrink-0 border-r border-slate-900/10 bg-slate-950 text-white lg:block">
-          <div className="sticky top-0 flex h-screen flex-col p-6">
-            <Link href="/" className="border-b border-white/10 pb-6">
-              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-orange-200">Studio</p>
-              <h1 className="mt-3 text-2xl font-semibold leading-tight">SnapMaker3d</h1>
-              <p className="mt-2 text-base leading-7 text-slate-300">Portal de impressão 3D.</p>
-            </Link>
+        <aside className="shell-sidebar hidden w-[320px] shrink-0 border-r border-white/10 text-white xl:block">
+          <div className="sticky top-0 flex h-screen flex-col px-7 py-7">
+            <BrandMark />
 
-            <nav className="mt-7 space-y-1">
+            <div className="mt-8 rounded-[1.65rem] border border-white/10 bg-white/5 px-5 py-5">
+              <p className="brand-kicker">Posicionamento</p>
+              <p className="mt-3 text-lg font-semibold text-white">Portal comercial e operacional para impressão 3D.</p>
+              <p className="mt-2 text-sm leading-7 text-slate-300">
+                Entrada, conversão, vitrine, publicação e rastreabilidade num único fluxo.
+              </p>
+            </div>
+
+            <nav className="mt-7 space-y-2">
               {navItems.map((item) => {
                 const selected = item.label === active;
                 return (
-                  <Link
-                    key={item.label}
-                    href={item.href}
-                    className={`flex items-center justify-between border-l-4 px-4 py-3.5 text-base font-semibold transition ${
-                      selected ? "border-orange-300 bg-white/10 text-white" : "border-transparent text-slate-300 hover:border-white/30 hover:text-white"
-                    }`}
-                  >
-                    <span>{item.label}</span>
-                    {item.badge ? <span className="rounded-full bg-orange-400/15 px-2 py-1 text-[0.65rem] uppercase tracking-[0.16em] text-orange-100">{item.badge}</span> : null}
+                  <Link key={item.label} href={item.href} className={`nav-link ${selected ? "nav-link-active" : ""}`}>
+                    <span>
+                      <span className="block">{item.label}</span>
+                      <span className="mt-1 block text-[0.74rem] font-medium tracking-[0.12em] text-slate-400">{item.helper}</span>
+                    </span>
+                    <span className="text-xs text-slate-500">●</span>
                   </Link>
                 );
               })}
             </nav>
 
-            <div className="mt-auto border-t border-white/10 pt-5">
-              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">Saída local</p>
-              <p className="mt-2 break-words font-mono text-xs leading-5 text-slate-200">~/Downloads/Projetos3d/SnapMaker3d</p>
-              <div className="mt-4 border-t border-white/10 pt-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Sessão</p>
-                <p className="mt-2 truncate text-sm font-semibold text-white">{user?.display_name ?? "Usuário"}</p>
-                <p className="text-xs text-slate-400">{user?.role === "master" ? "Acesso master" : "Usuário autenticado"}</p>
+            <div className="mt-auto space-y-4">
+              <div className="rounded-[1.5rem] border border-white/10 bg-white/5 px-5 py-5">
+                <p className="brand-kicker">Operação local</p>
+                <p className="mt-3 text-sm font-semibold text-white">Pasta principal</p>
+                <p className="mt-2 break-words font-mono text-xs leading-6 text-slate-300">~/Downloads/Projetos3d/SnapMaker3d</p>
+              </div>
+              <div className="rounded-[1.5rem] border border-white/10 bg-white/5 px-5 py-5">
+                <p className="brand-kicker">Sessão</p>
+                <p className="mt-3 truncate text-base font-semibold text-white">{user?.display_name ?? "Usuário"}</p>
+                <p className="text-sm text-slate-400">{user?.role === "master" ? "Administrador master" : "Acesso autenticado"}</p>
                 <button
                   type="button"
                   onClick={logout}
-                  className="mt-3 w-full rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-orange-100"
+                  className="mt-4 w-full rounded-full bg-white px-4 py-3 text-sm font-semibold text-slate-950 transition hover:bg-orange-100"
                 >
-                  Sair
+                  Encerrar sessão
                 </button>
               </div>
             </div>
@@ -80,36 +85,42 @@ export function AppShell({ children, active = "Visão geral", title = "SnapMaker
         </aside>
 
         <section className="min-w-0 flex-1">
-          <header className="border-b border-slate-900/10 bg-white/45 px-5 py-6 backdrop-blur md:px-10 2xl:px-16">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <header className="shell-topbar px-6 py-5 lg:px-10 2xl:px-16">
+            <div className="flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
               <div>
                 <p className="section-kicker">{active}</p>
-                <h2 className="mt-2 text-3xl font-semibold text-slate-950 md:text-4xl">{title}</h2>
-                {subtitle ? <p className="mt-3 max-w-3xl text-base leading-7 text-slate-600 md:text-lg">{subtitle}</p> : null}
+                <h2 className="mt-2 text-3xl font-semibold text-slate-950 md:text-5xl">{title}</h2>
+                {subtitle ? <p className="portal-subtitle max-w-4xl">{subtitle}</p> : null}
               </div>
-              <nav className="flex gap-2 overflow-x-auto lg:hidden">
-                {navItems.map((item) => {
-                  const selected = item.label === active;
-                  return (
-                    <Link
-                      key={item.label}
-                      href={item.href}
-                      className={`shrink-0 rounded-full border px-4 py-2 text-sm font-semibold ${
-                        selected ? "border-slate-950 bg-slate-950 text-white" : "border-slate-900/10 bg-white text-slate-700"
-                      }`}
-                    >
-                      {item.label}
-                    </Link>
-                  );
-                })}
-              </nav>
-              <button
-                type="button"
-                onClick={logout}
-                className="w-fit rounded-full border border-slate-900/10 bg-white px-4 py-2 text-sm font-semibold text-slate-700 lg:hidden"
-              >
-                Sair
-              </button>
+
+              <div className="flex flex-wrap items-center gap-3">
+                <Link href="/new-project" className="portal-action portal-action-primary">
+                  Novo projeto
+                </Link>
+                <Link href="/catalog" className="portal-action">
+                  Catálogo
+                </Link>
+                <button type="button" onClick={logout} className="portal-action xl:hidden">
+                  Sair
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-5 flex gap-2 overflow-x-auto xl:hidden">
+              {navItems.map((item) => {
+                const selected = item.label === active;
+                return (
+                  <Link
+                    key={item.label}
+                    href={item.href}
+                    className={`shrink-0 rounded-full px-4 py-2 text-sm font-semibold transition ${
+                      selected ? "bg-slate-950 text-white" : "border border-slate-900/10 bg-white/80 text-slate-700"
+                    }`}
+                  >
+                    {item.label}
+                  </Link>
+                );
+              })}
             </div>
           </header>
 

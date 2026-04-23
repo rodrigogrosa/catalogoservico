@@ -116,8 +116,8 @@ export default function SocialLoginPage() {
   return (
     <AppShell
       active="Login social"
-      title="Configuração de login social"
-      subtitle="Centralize Google, Apple e Instagram em uma única tela, com redirect pronta, links oficiais e ativação controlada para a tela de login."
+      title="Identidade e login social"
+      subtitle="Gerencie os provedores de acesso do portal em uma central única, com redirects prontas, documentação oficial e ativação controlada."
     >
       <div className="space-y-10 px-5 py-8 md:px-10 2xl:px-16">
         <section className="grid gap-8 border-b border-slate-900/10 pb-10 xl:grid-cols-[1.1fr_0.9fr]">

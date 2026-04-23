@@ -13,7 +13,7 @@ const toneMap: Record<string, string> = {
 
 export function StatusBadge({ status }: Props) {
   return (
-    <span className={`rounded-full border px-4 py-2 text-sm font-semibold capitalize ${toneMap[status] ?? "border-slate-300 bg-white/70 text-slate-900"}`}>
+    <span className={`rounded-full border px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] ${toneMap[status] ?? "border-slate-300 bg-white/70 text-slate-900"}`}>
       {status.replaceAll("_", " ")}
     </span>
   );

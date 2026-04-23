@@ -62,9 +62,9 @@ export function UploadDropzone({ onUploaded, compact = false }: Props) {
   }
 
   return (
-    <section className="border-b border-slate-900/10 py-8">
+    <section className="hero-panel overflow-hidden rounded-[2rem] px-6 py-7 md:px-8 md:py-8">
       <div
-        className={`border-y border-dashed py-8 transition md:py-10 ${dragActive ? "border-orange-500 bg-orange-500/10" : "border-slate-900/15"}`}
+        className={`rounded-[1.7rem] border-2 border-dashed px-4 py-7 transition md:px-6 md:py-8 ${dragActive ? "border-orange-500 bg-orange-500/10" : "border-slate-900/10 bg-white/42"}`}
         onDragEnter={(event) => {
           event.preventDefault();
           setDragActive(true);
@@ -83,13 +83,12 @@ export function UploadDropzone({ onUploaded, compact = false }: Props) {
         <div className="space-y-5">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
-              <p className="section-kicker">Novo projeto</p>
+              <p className="section-kicker">Central de entrada</p>
               <h2 className="mt-2 max-w-3xl text-3xl font-semibold leading-tight md:text-4xl">
-                Envie arquivos 3D ou pacote Bambu.
+                Importe modelos, pacotes Bambu e bibliotecas dependentes.
               </h2>
               <p className="mt-3 max-w-3xl text-base leading-7 text-slate-600 md:text-lg">
-                STL, SLT, 3MF, OBJ/MTL, STEP, AMF e ZIP. Os resultados ficam salvos em
-                <span className="ml-1 rounded-full bg-white px-2.5 py-1 font-mono text-xs text-orange-700">~/Downloads/Projetos3d/SnapMaker3d</span>.
+                Aceite STL, SLT, 3MF, OBJ/MTL, STEP, AMF e ZIP com uma experiência única de importação, validação e catalogação.
               </p>
             </div>
             {isUploading || isImporting ? (
@@ -102,7 +101,7 @@ export function UploadDropzone({ onUploaded, compact = false }: Props) {
             <input
               value={projectName}
               onChange={(event) => setProjectName(event.target.value)}
-              placeholder="Nome opcional do projeto"
+              placeholder="Nome comercial ou interno do projeto"
               className="w-full rounded-[1.25rem] border border-slate-900/10 bg-white/90 px-5 py-4 text-lg outline-none transition placeholder:text-slate-400 focus:border-orange-500"
             />
             <button
@@ -110,7 +109,7 @@ export function UploadDropzone({ onUploaded, compact = false }: Props) {
               onClick={() => inputRef.current?.click()}
               className="rounded-[1.25rem] bg-slate-950 px-7 py-4 text-lg font-semibold text-white transition hover:bg-slate-800"
             >
-              {isUploading ? "Enviando..." : "Selecionar arquivo"}
+              {isUploading ? "Enviando..." : "Selecionar arquivos"}
             </button>
           </div>
           <input
@@ -122,7 +121,7 @@ export function UploadDropzone({ onUploaded, compact = false }: Props) {
             onChange={(event) => void handleFiles(event.target.files)}
           />
           <div className="rounded-[1.4rem] border border-slate-900/10 bg-white/72 p-4">
-            <p className="text-lg font-semibold text-slate-950">Ou importar por link Bambu Lab / download direto</p>
+            <p className="text-lg font-semibold text-slate-950">Ou importar por link de download</p>
             <div className="mt-3 grid gap-3 md:grid-cols-[1fr_auto]">
               <input
                 value={projectUrl}
@@ -140,14 +139,14 @@ export function UploadDropzone({ onUploaded, compact = false }: Props) {
               </button>
             </div>
             <p className="mt-3 text-base leading-7 text-slate-500">
-              Links de página pública podem exigir login ou não entregar o arquivo direto. Quando isso ocorrer, use o link de download do .3mf/.zip.
+              Se o marketplace bloquear o download direto, baixe o arquivo no navegador e envie-o manualmente por esta área.
             </p>
           </div>
           {!compact ? (
             <div className="grid gap-3 md:grid-cols-3">
-              <InfoChip title="Conversão segura" text="Sanitiza 3MF, layout, suportes e primeira camada." />
-              <InfoChip title="Entrega rastreável" text="Cada export recebe versão e artefatos separados." />
-              <InfoChip title="Compatibilidade" text="SLT é tratado como STL automaticamente." />
+              <InfoChip title="Fluxo seguro" text="Sanitiza 3MF, layout e parâmetros críticos antes do processamento." />
+              <InfoChip title="Rastreabilidade" text="Cada saída recebe versão própria e artefatos separados." />
+              <InfoChip title="Compatibilidade imediata" text="SLT é tratado como STL e dependências de OBJ são agrupadas." />
             </div>
           ) : null}
           {error ? (
@@ -188,7 +187,7 @@ function makerWorldPageMessage() {
 function MakerWorldImportHelp({ message, onSelectFile, url }: { message: string; onSelectFile: () => void; url: string }) {
   return (
     <div className="rounded-[1.35rem] border border-orange-200 bg-orange-50 px-4 py-4 text-orange-950">
-      <p className="text-sm font-semibold uppercase tracking-[0.18em] text-orange-700">MakerWorld exige download pelo navegador</p>
+      <p className="text-sm font-semibold uppercase tracking-[0.18em] text-orange-700">Importação assistida de marketplace</p>
       <p className="mt-2 text-base leading-7">{message}</p>
       <div className="mt-4 grid gap-2 text-sm leading-6 text-orange-900 md:grid-cols-2">
         <p className="rounded-2xl bg-white/70 p-3">1. Abra o link no navegador e faça login, se necessário.</p>
@@ -204,7 +203,7 @@ function MakerWorldImportHelp({ message, onSelectFile, url }: { message: string;
           rel="noreferrer"
           className="inline-flex rounded-full bg-slate-950 px-5 py-3 text-sm font-semibold text-white"
         >
-          Abrir MakerWorld
+          Abrir página do modelo
         </a>
         ) : null}
         <button
@@ -212,7 +211,7 @@ function MakerWorldImportHelp({ message, onSelectFile, url }: { message: string;
           onClick={onSelectFile}
           className="inline-flex rounded-full border border-orange-300 bg-white px-5 py-3 text-sm font-semibold text-orange-900"
         >
-          Enviar .3mf baixado
+          Enviar arquivo baixado
         </button>
       </div>
     </div>

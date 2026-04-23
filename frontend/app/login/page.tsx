@@ -1,7 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { type FormEvent, useEffect, useState } from "react";
 
+import { BrandMark } from "@/components/brand-mark";
 import { useAuth } from "@/components/auth-provider";
 import { fetchOAuthProviders, type OAuthProviderStatus } from "@/lib/api";
 
@@ -35,24 +37,25 @@ export default function LoginPage() {
   return (
     <main className="min-h-screen px-4 py-8 md:px-8">
       <div className="mx-auto grid min-h-[calc(100vh-4rem)] max-w-6xl items-center gap-6 lg:grid-cols-[1.05fr_0.95fr]">
-        <section className="panel clean-hero p-7 md:p-10">
-          <p className="section-kicker">Acesso seguro</p>
+        <section className="clean-hero overflow-hidden rounded-[2rem] p-7 md:p-10">
+          <BrandMark href="" />
+          <p className="section-kicker mt-8">Portal profissional</p>
           <h1 className="mt-4 text-4xl font-semibold leading-tight text-slate-950 md:text-6xl">
-            SnapMaker3d Studio
+            Controle operação, catálogo e canais num só lugar.
           </h1>
           <p className="mt-5 max-w-2xl text-lg leading-8 text-slate-600">
-            Entre com o acesso master local ou use provedores sociais quando as credenciais OAuth estiverem configuradas.
+            Entre com o acesso master ou habilite Google, Apple e Instagram na área administrativa para transformar o sistema em um portal vendável.
           </p>
           <div className="mt-8 grid gap-3 sm:grid-cols-3">
-            <InfoCard title="Master" text="Acesso administrativo local." />
-            <InfoCard title="Social" text="Google, Apple e Instagram preparados." />
-            <InfoCard title="Protegido" text="APIs principais exigem sessão." />
+            <InfoCard title="Operação" text="Entrada, fila, catálogo e relatórios." />
+            <InfoCard title="Vendas" text="Marketplaces, copy e publicação guiada." />
+            <InfoCard title="Acesso" text="Login master e camadas sociais configuráveis." />
           </div>
         </section>
 
-        <section className="panel p-5 md:p-7">
+        <section className="portal-card rounded-[2rem] p-5 md:p-7">
           <p className="section-kicker">Login</p>
-          <h2 className="mt-2 text-3xl font-semibold text-slate-950">Entrar no sistema</h2>
+          <h2 className="mt-2 text-3xl font-semibold text-slate-950">Entrar no portal</h2>
 
           <form onSubmit={handleSubmit} className="mt-6 space-y-4">
             <label className="block">
@@ -101,8 +104,13 @@ export default function LoginPage() {
               </p>
             ) : null}
             <p className="rounded-2xl border border-slate-900/10 bg-white/70 px-4 py-3 text-sm leading-6 text-slate-600">
-              A configuração completa de Google, Apple e Instagram fica na área administrativa <strong>Login social</strong>, acessível após entrar como master.
+              A configuração completa de Google, Apple e Instagram fica na área <strong>Login social</strong>, acessível após entrar como master.
             </p>
+          </div>
+          <div className="mt-5">
+            <Link href="/" className="text-sm font-semibold text-orange-700">
+              Voltar para a página principal
+            </Link>
           </div>
         </section>
       </div>

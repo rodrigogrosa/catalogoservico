@@ -152,8 +152,8 @@ export default function StoresPage() {
   return (
     <AppShell
       active="Lojas"
-      title="Lojas e integrações"
-      subtitle="Cadastre contas por usuário logado e prepare a publicação automática de produtos em marketplaces."
+      title="Canais de venda e integrações"
+      subtitle="Conecte marketplaces, contas e payloads de publicação em uma área comercial pensada para operação diária."
     >
       <div className="portal-stack">
         {error ? <p className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-base text-red-700">{error}</p> : null}
