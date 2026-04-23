@@ -41,6 +41,12 @@ if (backendOrigin) {
 }
 
 const nextConfig: NextConfig = {
+  experimental: {
+    middlewareClientMaxBodySize: "200mb",
+    serverActions: {
+      bodySizeLimit: "200mb",
+    },
+  },
   async rewrites() {
     if (!backendOriginRaw) {
       return [];
