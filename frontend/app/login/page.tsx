@@ -100,6 +100,9 @@ export default function LoginPage() {
                 Provedores sociais indisponíveis no momento. Use o acesso master.
               </p>
             ) : null}
+            <p className="rounded-2xl border border-slate-900/10 bg-white/70 px-4 py-3 text-sm leading-6 text-slate-600">
+              A configuração completa de Google, Apple e Instagram fica na área administrativa <strong>Login social</strong>, acessível após entrar como master.
+            </p>
           </div>
         </section>
       </div>

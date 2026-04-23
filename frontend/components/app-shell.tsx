@@ -22,6 +22,7 @@ const navItems: NavItem[] = [
   { label: "Visão geral", href: "/" },
   { label: "Novo projeto", href: "/new-project" },
   { label: "Catálogo", href: "/catalog" },
+  { label: "Login social", href: "/social-login" },
   { label: "Lojas", href: "/stores" },
   { label: "Fila", href: "/queue" },
   { label: "Relatórios", href: "/reports" },

@@ -326,6 +326,44 @@ export type OAuthProviderStatus = {
   reason?: string | null;
 };
 
+export type SocialLoginField = {
+  key: string;
+  label: string;
+  required: boolean;
+  secret: boolean;
+  group: string;
+  current_value?: string | null;
+  placeholder?: string | null;
+  help_text?: string | null;
+  help_url?: string | null;
+};
+
+export type SocialLoginCredentialStatus = {
+  key: string;
+  label: string;
+  configured: boolean;
+  masked_value?: string | null;
+};
+
+export type SocialLoginProviderConfig = {
+  provider: string;
+  label: string;
+  status: string;
+  enabled: boolean;
+  login_button_enabled: boolean;
+  auth_url?: string | null;
+  reason?: string | null;
+  docs_url: string;
+  console_url: string;
+  recommended_redirect_uri: string;
+  redirect_uri: string;
+  callback_uri: string;
+  scopes: string[];
+  fields: SocialLoginField[];
+  credential_status: SocialLoginCredentialStatus[];
+  notes: string[];
+};
+
 function authHeaders(): Record<string, string> {
   const token = getStoredAuthToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
@@ -531,6 +569,34 @@ export async function fetchOAuthProviders(): Promise<OAuthProviderStatus[]> {
   if (!response.ok) throw await parseApiError(response, "Falha ao carregar provedores de login.");
   const payload = await response.json();
   return payload.providers;
+}
+
+export async function fetchSocialLoginProviders(): Promise<SocialLoginProviderConfig[]> {
+  const response = await apiFetch("/auth/social-config", { cache: "no-store", headers: authHeaders() });
+  if (!response.ok) throw await parseApiError(response, "Falha ao carregar configuração de login social.");
+  const payload = await response.json();
+  return payload.providers;
+}
+
+export async function updateSocialLoginProvider(
+  provider: string,
+  payload: {
+    credentials?: Record<string, string>;
+    redirect_uri?: string;
+    scopes?: string[];
+    login_button_enabled?: boolean;
+  },
+): Promise<SocialLoginProviderConfig> {
+  const response = await apiFetch(`/auth/social-config/${provider}`, {
+    method: "PUT",
+    headers: {
+      ...authHeaders(),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw await parseApiError(response, "Falha ao salvar configuração de login social.");
+  return response.json();
 }
 
 export async function fetchStoreConnectors(): Promise<MarketplaceConnector[]> {

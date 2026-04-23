@@ -5,16 +5,28 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
 import json
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
 from app.core.config import get_settings
-from app.schemas.auth import AuthUser, LoginResponse, OAuthProviderStatus
+from app.schemas.auth import (
+    AuthUser,
+    LoginResponse,
+    OAuthProviderStatus,
+    SocialLoginCredentialStatus,
+    SocialLoginField,
+    SocialLoginProviderConfig,
+    SocialLoginProviderConfigUpdateRequest,
+)
 
 
 class AuthService:
     def __init__(self) -> None:
         self.settings = get_settings()
+        self.data_dir = self.settings.storage_root / "_system"
+        self.data_path = self.data_dir / "social_login.json"
+        self.data_dir.mkdir(parents=True, exist_ok=True)
 
     def authenticate_master(self, username: str, password: str) -> LoginResponse | None:
         expected_user = self.settings.master_username
@@ -81,66 +93,302 @@ class AuthService:
         )
 
     def list_oauth_providers(self) -> list[OAuthProviderStatus]:
-        return [
-            self.build_provider_status(
-                provider="google",
-                label="Google",
-                client_id=self.settings.google_oauth_client_id,
-                redirect_uri=self.settings.google_oauth_redirect_uri,
-                base_url="https://accounts.google.com/o/oauth2/v2/auth",
-                scope="openid email profile",
-                extra={"response_type": "code", "access_type": "offline", "prompt": "consent"},
-            ),
-            self.build_provider_status(
-                provider="apple",
-                label="Apple",
-                client_id=self.settings.apple_oauth_client_id,
-                redirect_uri=self.settings.apple_oauth_redirect_uri,
-                base_url="https://appleid.apple.com/auth/authorize",
-                scope="name email",
-                extra={"response_type": "code", "response_mode": "form_post"},
-            ),
-            self.build_provider_status(
-                provider="instagram",
-                label="Instagram",
-                client_id=self.settings.instagram_oauth_client_id,
-                redirect_uri=self.settings.instagram_oauth_redirect_uri,
-                base_url="https://api.instagram.com/oauth/authorize",
-                scope="user_profile,user_media",
-                extra={"response_type": "code"},
-            ),
-        ]
+        return [self.to_oauth_status(config) for config in self.list_social_provider_configs()]
 
-    def build_provider_status(
+    def list_social_provider_configs(self) -> list[SocialLoginProviderConfig]:
+        records = self.load_provider_records()
+        return [self.build_provider_config(definition, records.get(definition["provider"], {})) for definition in self.provider_definitions()]
+
+    def update_social_provider_config(
         self,
         provider: str,
-        label: str,
-        client_id: str,
-        redirect_uri: str,
-        base_url: str,
-        scope: str,
-        extra: dict[str, str],
-    ) -> OAuthProviderStatus:
-        if not client_id or not redirect_uri:
-            return OAuthProviderStatus(
-                provider=provider,
-                label=label,
-                enabled=False,
-                reason="Configure client_id e redirect_uri para ativar este login social.",
-            )
-        query: dict[str, Any] = {
-            "client_id": client_id,
-            "redirect_uri": redirect_uri,
-            "scope": scope,
-            "state": "snapmaker3d-studio",
-            **extra,
-        }
-        return OAuthProviderStatus(
-            provider=provider,
-            label=label,
-            enabled=True,
-            auth_url=f"{base_url}?{urlencode(query)}",
+        payload: SocialLoginProviderConfigUpdateRequest,
+    ) -> SocialLoginProviderConfig | None:
+        definitions = {definition["provider"]: definition for definition in self.provider_definitions()}
+        definition = definitions.get(provider)
+        if definition is None:
+            return None
+
+        records = self.load_provider_records()
+        current = dict(records.get(provider, {}))
+        credentials = {**current.get("credentials", {})}
+        settings = {**current.get("settings", {})}
+
+        for key, value in payload.credentials.items():
+            normalized = value.strip()
+            if normalized:
+                credentials[key] = normalized
+            else:
+                credentials.pop(key, None)
+
+        if payload.redirect_uri is not None:
+            normalized_redirect = payload.redirect_uri.strip()
+            if normalized_redirect:
+                settings["redirect_uri"] = normalized_redirect
+            else:
+                settings.pop("redirect_uri", None)
+
+        if payload.scopes is not None:
+            normalized_scopes = [scope.strip() for scope in payload.scopes if scope.strip()]
+            if normalized_scopes:
+                settings["scopes"] = normalized_scopes
+            else:
+                settings.pop("scopes", None)
+
+        if payload.login_button_enabled is not None:
+            settings["login_button_enabled"] = payload.login_button_enabled
+
+        settings["updated_at"] = datetime.now(tz=timezone.utc).isoformat()
+        records[provider] = {"credentials": credentials, "settings": settings}
+        self.write_provider_records(records)
+        return self.build_provider_config(definition, records[provider])
+
+    def build_provider_config(self, definition: dict[str, Any], record: dict[str, Any]) -> SocialLoginProviderConfig:
+        credentials = {**self.env_credentials_for_provider(definition["provider"]), **record.get("credentials", {})}
+        settings = record.get("settings", {})
+        redirect_uri = settings.get("redirect_uri") or self.recommended_redirect_uri(definition["provider"])
+        scopes = settings.get("scopes") or list(definition["default_scopes"])
+        login_button_enabled = bool(settings.get("login_button_enabled", False))
+
+        required_keys = [field.key for field in definition["fields"] if field.required]
+        configured_required = [key for key in required_keys if credentials.get(key)]
+        all_required_present = len(configured_required) == len(required_keys)
+
+        if all_required_present and login_button_enabled:
+            status = "ready_for_oauth"
+            reason = "Configuração salva e botão liberado na tela de login."
+        elif all_required_present:
+            status = "configured"
+            reason = "Credenciais salvas. Ative o botão de login quando quiser testar o provedor."
+        elif configured_required:
+            status = "partial"
+            reason = "Configuração parcial. Falta preencher pelo menos um campo obrigatório."
+        else:
+            status = "not_configured"
+            reason = "Ainda não configurado. Use esta tela para salvar as credenciais do provedor."
+
+        auth_url = None
+        if all_required_present and login_button_enabled:
+            client_id = str(credentials.get("client_id") or credentials.get("service_id") or "")
+            query = {
+                "client_id": client_id,
+                "redirect_uri": redirect_uri,
+                "scope": self.scope_param(definition["provider"], scopes),
+                "state": "snapmaker3d-studio",
+                **definition["auth_extra"],
+            }
+            auth_url = f"{definition['auth_base_url']}?{urlencode(query)}"
+
+        return SocialLoginProviderConfig(
+            provider=definition["provider"],
+            label=definition["label"],
+            status=status,
+            enabled=status == "ready_for_oauth",
+            login_button_enabled=login_button_enabled,
+            auth_url=auth_url,
+            reason=reason,
+            docs_url=definition["docs_url"],
+            console_url=definition["console_url"],
+            recommended_redirect_uri=self.recommended_redirect_uri(definition["provider"]),
+            redirect_uri=redirect_uri,
+            callback_uri=self.recommended_redirect_uri(definition["provider"]),
+            scopes=scopes,
+            fields=[
+                field.model_copy(
+                    update={
+                        "current_value": None if field.secret else str(credentials.get(field.key, "") or ""),
+                    }
+                )
+                for field in definition["fields"]
+            ],
+            credential_status=[
+                SocialLoginCredentialStatus(
+                    key=field.key,
+                    label=field.label,
+                    configured=bool(credentials.get(field.key)),
+                    masked_value=self.mask_value(str(credentials.get(field.key, "")), field.secret),
+                )
+                for field in definition["fields"]
+            ],
+            notes=definition["notes"],
         )
+
+    def to_oauth_status(self, config: SocialLoginProviderConfig) -> OAuthProviderStatus:
+        if config.enabled and config.auth_url:
+            return OAuthProviderStatus(
+                provider=config.provider,
+                label=config.label,
+                enabled=True,
+                auth_url=config.auth_url,
+            )
+        return OAuthProviderStatus(
+            provider=config.provider,
+            label=config.label,
+            enabled=False,
+            reason=config.reason,
+        )
+
+    def recommended_redirect_uri(self, provider: str) -> str:
+        return f"{self.settings.public_backend_origin.rstrip('/')}/api/v1/auth/oauth/{provider}/callback"
+
+    def provider_definitions(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "provider": "google",
+                "label": "Google",
+                "docs_url": "https://developers.google.com/identity/protocols/oauth2/web-server",
+                "console_url": "https://console.cloud.google.com/apis/credentials",
+                "auth_base_url": "https://accounts.google.com/o/oauth2/v2/auth",
+                "default_scopes": ["openid", "email", "profile"],
+                "auth_extra": {"response_type": "code", "access_type": "offline", "prompt": "consent"},
+                "fields": [
+                    SocialLoginField(
+                        key="client_id",
+                        label="OAuth Client ID",
+                        placeholder="1234567890-abc.apps.googleusercontent.com",
+                        help_text="Crie credenciais do tipo Web application e copie o Client ID.",
+                        help_url="https://developers.google.com/identity/oauth2/web/guides/get-google-api-clientid",
+                    ),
+                    SocialLoginField(
+                        key="client_secret",
+                        label="Client Secret",
+                        secret=True,
+                        placeholder="GOCSPX-...",
+                        help_text="O Client Secret é necessário para a troca server-side do authorization code.",
+                        help_url="https://developers.google.com/identity/protocols/oauth2/web-server",
+                    ),
+                ],
+                "notes": [
+                    "Adicione o domínio público do sistema em Authorized JavaScript origins no Google Cloud.",
+                    "Cadastre exatamente a Redirect URI recomendada abaixo em Authorized redirect URIs.",
+                    "Se quiser testar localmente, crie também uma credencial separada para localhost.",
+                ],
+            },
+            {
+                "provider": "apple",
+                "label": "Apple",
+                "docs_url": "https://developer.apple.com/documentation/signinwithapple/configuring-your-environment-for-sign-in-with-apple",
+                "console_url": "https://developer.apple.com/account/resources/identifiers/list",
+                "auth_base_url": "https://appleid.apple.com/auth/authorize",
+                "default_scopes": ["name", "email"],
+                "auth_extra": {"response_type": "code", "response_mode": "form_post"},
+                "fields": [
+                    SocialLoginField(
+                        key="client_id",
+                        label="Services ID / Client ID",
+                        placeholder="com.euachei3d.web",
+                        help_text="No login web da Apple, o client_id normalmente é o Services ID.",
+                        help_url="https://developer.apple.com/help/account/capabilities/configure-sign-in-with-apple-for-the-web/",
+                    ),
+                    SocialLoginField(
+                        key="team_id",
+                        label="Apple Team ID",
+                        placeholder="1A2BC3D4E5",
+                        help_text="Necessário para gerar o client secret JWT do Sign in with Apple.",
+                        help_url="https://developer.apple.com/documentation/signinwithapple/configuring-your-environment-for-sign-in-with-apple",
+                    ),
+                    SocialLoginField(
+                        key="key_id",
+                        label="Key ID",
+                        placeholder="ABC123XYZ9",
+                        help_text="É o identificador da chave privada criada para Sign in with Apple.",
+                        help_url="https://developer.apple.com/help/account/configure-app-capabilities/create-a-sign-in-with-apple-private-key/",
+                    ),
+                    SocialLoginField(
+                        key="private_key",
+                        label="Private Key (.p8)",
+                        secret=True,
+                        group="Chave privada",
+                        placeholder="-----BEGIN PRIVATE KEY-----",
+                        help_text="Cole o conteúdo da chave .p8 em formato PEM.",
+                        help_url="https://developer.apple.com/help/account/configure-app-capabilities/create-a-sign-in-with-apple-private-key/",
+                    ),
+                ],
+                "notes": [
+                    "A Apple exige HTTPS real para web e não aceita localhost/IP como redirect web.",
+                    "Você precisa criar um Services ID, associar domínios e return URLs e gerar a chave privada.",
+                    "Este projeto já deixa a Redirect URI pronta; falta cadastrar a mesma URI na Apple.",
+                ],
+            },
+            {
+                "provider": "instagram",
+                "label": "Instagram",
+                "docs_url": "https://developers.facebook.com/docs/instagram-platform",
+                "console_url": "https://developers.facebook.com/apps/",
+                "auth_base_url": "https://api.instagram.com/oauth/authorize",
+                "default_scopes": ["user_profile", "user_media"],
+                "auth_extra": {"response_type": "code"},
+                "fields": [
+                    SocialLoginField(
+                        key="client_id",
+                        label="App ID / Client ID",
+                        placeholder="123456789012345",
+                        help_text="Crie um app na Meta for Developers e ative o produto do Instagram usado na integração.",
+                        help_url="https://developers.facebook.com/apps/",
+                    ),
+                    SocialLoginField(
+                        key="client_secret",
+                        label="App Secret",
+                        secret=True,
+                        placeholder="app-secret",
+                        help_text="O App Secret é necessário para trocar o code por token no backend.",
+                        help_url="https://developers.facebook.com/apps/",
+                    ),
+                ],
+                "notes": [
+                    "Use a mesma Redirect URI recomendada abaixo dentro do app da Meta.",
+                    "Dependendo do produto habilitado na Meta, os escopos e a revisão do app podem variar.",
+                    "Para produção, confirme no dashboard da Meta se o fluxo será Instagram Login ou outro produto equivalente.",
+                ],
+            },
+        ]
+
+    def env_credentials_for_provider(self, provider: str) -> dict[str, str]:
+        if provider == "google":
+            return {
+                "client_id": self.settings.google_oauth_client_id,
+                "client_secret": "",
+            }
+        if provider == "apple":
+            return {
+                "client_id": self.settings.apple_oauth_client_id,
+            }
+        if provider == "instagram":
+            return {
+                "client_id": self.settings.instagram_oauth_client_id,
+                "client_secret": "",
+            }
+        return {}
+
+    def load_provider_records(self) -> dict[str, Any]:
+        if not self.data_path.exists():
+            return {}
+        try:
+            payload = json.loads(self.data_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return {}
+        if isinstance(payload, dict):
+            return payload
+        return {}
+
+    def write_provider_records(self, records: dict[str, Any]) -> None:
+        self.data_path.write_text(json.dumps(records, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    def scope_param(self, provider: str, scopes: list[str]) -> str:
+        delimiter = "," if provider == "instagram" else " "
+        return delimiter.join(scopes)
+
+    @staticmethod
+    def mask_value(value: str, secret: bool) -> str | None:
+        if not value:
+            return None
+        if not secret:
+            if len(value) <= 10:
+                return value
+            return f"{value[:6]}...{value[-4:]}"
+        if len(value) <= 8:
+            return "•" * len(value)
+        return f"{'•' * 8}{value[-4:]}"
 
     @staticmethod
     def base64url_encode(value: bytes) -> str:
