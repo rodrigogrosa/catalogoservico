@@ -1,4 +1,5 @@
 import asyncio
+import logging
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
@@ -18,6 +19,7 @@ from app.services.project_service import ProjectService
 
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.get("", response_model=ProjectListResponse)
@@ -25,7 +27,7 @@ async def list_projects(
     service: ProjectService = Depends(get_project_service),
     current_user: AuthUser = Depends(require_current_user),
 ) -> ProjectListResponse:
-    _ = current_user
+    logger.info("projects_list_requested", extra={"username": current_user.username})
     return ProjectListResponse(items=service.list_projects())
 
 
@@ -35,7 +37,7 @@ async def get_project(
     service: ProjectService = Depends(get_project_service),
     current_user: AuthUser = Depends(require_current_user),
 ) -> ProjectDetailResponse:
-    _ = current_user
+    logger.info("project_detail_requested", extra={"username": current_user.username, "project_id": project_id})
     project = service.get_project(project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="Projeto nao encontrado.")
@@ -48,7 +50,7 @@ async def delete_project(
     service: ProjectService = Depends(get_project_service),
     current_user: AuthUser = Depends(require_current_user),
 ) -> dict[str, str]:
-    _ = current_user
+    logger.info("project_delete_requested", extra={"username": current_user.username, "project_id": project_id})
     try:
         deleted = service.delete_project(project_id)
     except ValueError as exc:
@@ -65,7 +67,15 @@ async def upload_project(
     service: ProjectService = Depends(get_project_service),
     current_user: AuthUser = Depends(require_current_user),
 ) -> ProjectDetailResponse:
-    _ = current_user
+    logger.info(
+        "project_upload_requested",
+        extra={
+            "username": current_user.username,
+            "project_name": project_name,
+            "file_count": len(files),
+            "filenames": [upload.filename for upload in files],
+        },
+    )
     try:
         return await service.create_project(file=None, files=files, requested_name=project_name)
     except ValueError as exc:
@@ -78,7 +88,14 @@ async def import_project_url(
     service: ProjectService = Depends(get_project_service),
     current_user: AuthUser = Depends(require_current_user),
 ) -> ProjectDetailResponse:
-    _ = current_user
+    logger.info(
+        "project_import_url_requested",
+        extra={
+            "username": current_user.username,
+            "project_name": payload.project_name,
+            "url": payload.url,
+        },
+    )
     try:
         return await service.create_project_from_url(payload.url, requested_name=payload.project_name)
     except ValueError as exc:
@@ -92,7 +109,7 @@ async def process_project(
     service: ProjectService = Depends(get_project_service),
     current_user: AuthUser = Depends(require_current_user),
 ) -> ProjectSummary:
-    _ = current_user
+    logger.info("project_process_requested", extra={"username": current_user.username, "project_id": project_id})
     project = service.get_project(project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="Projeto nao encontrado.")
@@ -109,7 +126,7 @@ async def build_project_bundle(
     service: ProjectService = Depends(get_project_service),
     current_user: AuthUser = Depends(require_current_user),
 ) -> ProjectBundleResponse:
-    _ = current_user
+    logger.info("project_bundle_requested", extra={"username": current_user.username, "project_id": project_id})
     project = service.get_project(project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="Projeto nao encontrado.")
@@ -123,7 +140,10 @@ async def compare_projects(
     service: ProjectService = Depends(get_project_service),
     current_user: AuthUser = Depends(require_current_user),
 ) -> ProjectCompareResponse:
-    _ = current_user
+    logger.info(
+        "project_compare_requested",
+        extra={"username": current_user.username, "project_id": project_id, "other_project_id": other_project_id},
+    )
     try:
         return service.compare_projects(project_id, other_project_id)
     except FileNotFoundError as exc:

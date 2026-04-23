@@ -1,14 +1,24 @@
-from fastapi import FastAPI
+from __future__ import annotations
+
+from contextlib import suppress
+import logging
+from time import perf_counter
+from uuid import uuid4
+
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.api.router import api_router
 from app.core.config import get_settings
-from app.core.logging import configure_logging
+from app.core.logging import clear_request_id, configure_logging, get_request_id, set_request_id
 
 
 settings = get_settings()
 configure_logging()
+logger = logging.getLogger("app.http")
 
 app = FastAPI(
     title="SnapMaker3d Studio API",
@@ -26,6 +36,79 @@ app.add_middleware(
 
 app.include_router(api_router, prefix="/api/v1")
 app.mount("/storage", StaticFiles(directory=settings.storage_root, check_dir=False), name="storage")
+
+
+@app.middleware("http")
+async def request_logging_middleware(request: Request, call_next):
+    request_id = request.headers.get("x-request-id") or uuid4().hex
+    set_request_id(request_id)
+    start = perf_counter()
+    logger.info(
+        "request_started",
+        extra={
+            "method": request.method,
+            "path": request.url.path,
+            "query": request.url.query,
+            "client": request.client.host if request.client else None,
+            "origin": request.headers.get("origin"),
+            "content_length": request.headers.get("content-length"),
+            "user_agent": request.headers.get("user-agent"),
+        },
+    )
+
+    response = None
+    try:
+        response = await call_next(request)
+        return response
+    finally:
+        duration_ms = round((perf_counter() - start) * 1000, 2)
+        if response is not None:
+            response.headers["x-request-id"] = request_id
+        logger.info(
+            "request_completed",
+            extra={
+                "method": request.method,
+                "path": request.url.path,
+                "status_code": getattr(response, "status_code", 500),
+                "duration_ms": duration_ms,
+                "content_length": request.headers.get("content-length"),
+            },
+        )
+        clear_request_id()
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    logger.warning(
+        "request_validation_error",
+        extra={
+            "method": request.method,
+            "path": request.url.path,
+            "errors": exc.errors(),
+        },
+    )
+    return JSONResponse(
+        status_code=422,
+        content={"detail": exc.errors(), "request_id": get_request_id()},
+        headers={"x-request-id": get_request_id()},
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    with suppress(Exception):
+        logger.exception(
+            "request_unhandled_exception",
+            extra={
+                "method": request.method,
+                "path": request.url.path,
+            },
+        )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Erro interno inesperado.", "request_id": get_request_id()},
+        headers={"x-request-id": get_request_id()},
+    )
 
 
 @app.get("/", tags=["meta"])

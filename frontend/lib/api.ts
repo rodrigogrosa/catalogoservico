@@ -312,9 +312,10 @@ export type StoreOAuthAuthorization = {
   instructions: string[];
 };
 
-const PUBLIC_API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "/api/v1";
+const BROWSER_API_BASE = "/api/v1";
+const PUBLIC_API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? BROWSER_API_BASE;
 const SERVER_API_BASE = process.env.SERVER_API_BASE_URL ?? PUBLIC_API_BASE;
-const API_BASE = typeof window === "undefined" ? SERVER_API_BASE : PUBLIC_API_BASE;
+const API_BASE = typeof window === "undefined" ? SERVER_API_BASE : BROWSER_API_BASE;
 const ORIGIN = process.env.NEXT_PUBLIC_BACKEND_ORIGIN ?? "http://localhost:8000";
 
 export type OAuthProviderStatus = {
@@ -330,15 +331,59 @@ function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+function buildRequestUrl(path: string): string {
+  return `${API_BASE}${path}`;
+}
+
+function buildDirectBackendUrl(path: string): string {
+  return `${ORIGIN}/api/v1${path}`;
+}
+
+type ApiFetchOptions = {
+  timeoutMs?: number;
+  directToBackend?: boolean;
+};
+
+async function apiFetch(path: string, init?: RequestInit, options?: ApiFetchOptions): Promise<Response> {
+  const url = options?.directToBackend ? buildDirectBackendUrl(path) : buildRequestUrl(path);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), options?.timeoutMs ?? 20000);
+
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown network error";
+    if (typeof window !== "undefined") {
+      console.error("[SnapMaker3d] API request failed", {
+        path,
+        url,
+        method: init?.method ?? "GET",
+        message,
+        directToBackend: options?.directToBackend ?? false,
+      });
+    }
+    throw new Error(`Falha de rede em ${init?.method ?? "GET"} ${path}: ${message}`);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function parseApiError(response: Response, fallback: string): Promise<Error> {
+  const requestId = response.headers.get("x-request-id");
   try {
     const payload = await response.json();
-    return new Error(payload.detail ?? fallback);
+    const detail = payload.detail ?? fallback;
+    const suffix = requestId ? ` [req ${requestId}]` : "";
+    return new Error(`${detail}${suffix}`);
   } catch (error) {
     if (error instanceof Error && error.message !== "Unexpected end of JSON input") {
       return error;
     }
-    return new Error(fallback);
+    const suffix = requestId ? ` [req ${requestId}]` : "";
+    return new Error(`${fallback}${suffix}`);
   }
 }
 
@@ -350,14 +395,14 @@ export function fileUrl(url?: string | null): string | undefined {
 }
 
 export async function fetchProjects(): Promise<ProjectSummary[]> {
-  const response = await fetch(`${API_BASE}/projects`, { cache: "no-store", headers: authHeaders() });
+  const response = await apiFetch("/projects", { cache: "no-store", headers: authHeaders() });
   if (!response.ok) throw await parseApiError(response, "Falha ao carregar projetos");
   const data = await response.json();
   return data.items;
 }
 
 export async function fetchProject(id: string): Promise<ProjectDetail> {
-  const response = await fetch(`${API_BASE}/projects/${id}`, { cache: "no-store", headers: authHeaders() });
+  const response = await apiFetch(`/projects/${id}`, { cache: "no-store", headers: authHeaders() });
   if (!response.ok) throw await parseApiError(response, "Falha ao carregar projeto");
   return response.json();
 }
@@ -366,10 +411,13 @@ export async function uploadProject(files: File[], projectName?: string): Promis
   const form = new FormData();
   files.forEach((file) => form.append("files", file));
   if (projectName) form.append("project_name", projectName);
-  const response = await fetch(`${API_BASE}/projects/upload`, {
+  const response = await apiFetch("/projects/upload", {
     method: "POST",
     headers: authHeaders(),
     body: form,
+  }, {
+    directToBackend: typeof window !== "undefined",
+    timeoutMs: 10 * 60 * 1000,
   });
   if (!response.ok) {
     throw await parseApiError(response, "Falha ao subir arquivo");
@@ -378,7 +426,7 @@ export async function uploadProject(files: File[], projectName?: string): Promis
 }
 
 export async function importProjectFromUrl(url: string, projectName?: string): Promise<ProjectDetail> {
-  const response = await fetch(`${API_BASE}/projects/import-url`, {
+  const response = await apiFetch("/projects/import-url", {
     method: "POST",
     headers: {
       ...authHeaders(),
@@ -393,7 +441,7 @@ export async function importProjectFromUrl(url: string, projectName?: string): P
 }
 
 export async function deleteProject(id: string): Promise<void> {
-  const response = await fetch(`${API_BASE}/projects/${id}`, {
+  const response = await apiFetch(`/projects/${id}`, {
     method: "DELETE",
     headers: authHeaders(),
   });
@@ -403,7 +451,7 @@ export async function deleteProject(id: string): Promise<void> {
 }
 
 export async function processProject(id: string, payload: ProcessPayload): Promise<ProjectSummary> {
-  const response = await fetch(`${API_BASE}/projects/${id}/process`, {
+  const response = await apiFetch(`/projects/${id}/process`, {
     method: "POST",
     headers: {
       ...authHeaders(),
@@ -416,20 +464,20 @@ export async function processProject(id: string, payload: ProcessPayload): Promi
 }
 
 export async function fetchProjectBundle(id: string): Promise<ArtifactReference> {
-  const response = await fetch(`${API_BASE}/projects/${id}/bundle`, { cache: "no-store", headers: authHeaders() });
+  const response = await apiFetch(`/projects/${id}/bundle`, { cache: "no-store", headers: authHeaders() });
   if (!response.ok) throw await parseApiError(response, "Falha ao gerar bundle");
   const data = await response.json();
   return data.bundle;
 }
 
 export async function compareProjects(baseId: string, otherId: string): Promise<ProjectCompareResponse> {
-  const response = await fetch(`${API_BASE}/projects/${baseId}/compare/${otherId}`, { cache: "no-store", headers: authHeaders() });
+  const response = await apiFetch(`/projects/${baseId}/compare/${otherId}`, { cache: "no-store", headers: authHeaders() });
   if (!response.ok) throw await parseApiError(response, "Falha ao comparar versões");
   return response.json();
 }
 
 export async function loginMaster(username: string, password: string): Promise<AuthSession> {
-  const response = await fetch(`${API_BASE}/auth/login`, {
+  const response = await apiFetch("/auth/login", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -441,34 +489,34 @@ export async function loginMaster(username: string, password: string): Promise<A
 }
 
 export async function fetchCurrentUser(): Promise<AuthUser> {
-  const response = await fetch(`${API_BASE}/auth/me`, { cache: "no-store", headers: authHeaders() });
+  const response = await apiFetch("/auth/me", { cache: "no-store", headers: authHeaders() });
   if (!response.ok) throw await parseApiError(response, "Sessao invalida ou expirada.");
   return response.json();
 }
 
 export async function fetchOAuthProviders(): Promise<OAuthProviderStatus[]> {
-  const response = await fetch(`${API_BASE}/auth/providers`, { cache: "no-store" });
+  const response = await apiFetch("/auth/providers", { cache: "no-store" });
   if (!response.ok) throw await parseApiError(response, "Falha ao carregar provedores de login.");
   const payload = await response.json();
   return payload.providers;
 }
 
 export async function fetchStoreConnectors(): Promise<MarketplaceConnector[]> {
-  const response = await fetch(`${API_BASE}/stores/connectors`, { cache: "no-store", headers: authHeaders() });
+  const response = await apiFetch("/stores/connectors", { cache: "no-store", headers: authHeaders() });
   if (!response.ok) throw await parseApiError(response, "Falha ao carregar conectores de loja.");
   const payload = await response.json();
   return payload.items;
 }
 
 export async function fetchStores(): Promise<StoreIntegration[]> {
-  const response = await fetch(`${API_BASE}/stores`, { cache: "no-store", headers: authHeaders() });
+  const response = await apiFetch("/stores", { cache: "no-store", headers: authHeaders() });
   if (!response.ok) throw await parseApiError(response, "Falha ao carregar lojas.");
   const payload = await response.json();
   return payload.items;
 }
 
 export async function createStore(payload: StorePayload): Promise<StoreIntegration> {
-  const response = await fetch(`${API_BASE}/stores`, {
+  const response = await apiFetch("/stores", {
     method: "POST",
     headers: {
       ...authHeaders(),
@@ -481,7 +529,7 @@ export async function createStore(payload: StorePayload): Promise<StoreIntegrati
 }
 
 export async function deleteStore(id: string): Promise<void> {
-  const response = await fetch(`${API_BASE}/stores/${id}`, {
+  const response = await apiFetch(`/stores/${id}`, {
     method: "DELETE",
     headers: authHeaders(),
   });
@@ -489,7 +537,7 @@ export async function deleteStore(id: string): Promise<void> {
 }
 
 export async function startMercadoLivreOAuth(storeId: string): Promise<StoreOAuthAuthorization> {
-  const response = await fetch(`${API_BASE}/stores/${storeId}/oauth/mercado-livre/start`, {
+  const response = await apiFetch(`/stores/${storeId}/oauth/mercado-livre/start`, {
     method: "POST",
     headers: {
       ...authHeaders(),
@@ -501,7 +549,7 @@ export async function startMercadoLivreOAuth(storeId: string): Promise<StoreOAut
 }
 
 export async function buildPublicationDraft(storeId: string, projectId: string): Promise<ProductPublishDraft> {
-  const response = await fetch(`${API_BASE}/stores/${storeId}/publish/${projectId}`, {
+  const response = await apiFetch(`/stores/${storeId}/publish/${projectId}`, {
     method: "POST",
     headers: {
       ...authHeaders(),

@@ -76,8 +76,25 @@ class ProjectService:
         if len(uploads) > self.settings.max_project_files:
             raise ValueError(f"O projeto excede o limite de {self.settings.max_project_files} arquivos por upload.")
         project_name = requested_name or Path((uploads[0].filename if uploads else "projeto-3d")).stem
+        logger.info(
+            "project_create_started",
+            extra={
+                "project_name": project_name,
+                "file_count": len(uploads),
+                "filenames": [upload.filename for upload in uploads],
+            },
+        )
         layout = self.storage.create_project_layout(project_name)
         saved_files = await self.storage.save_uploads(uploads, layout["folders"]["original"])
+        logger.info(
+            "project_upload_saved",
+            extra={
+                "project_name": project_name,
+                "storage_path": str(layout["folders"]["root"]),
+                "saved_files": [str(path) for path in saved_files],
+                "saved_size_bytes": sum(path.stat().st_size for path in saved_files if path.exists()),
+            },
+        )
         return self.create_project_from_saved_files(saved_files, layout, project_name, origin_url=None)
 
     async def create_project_from_url(self, url: str, requested_name: str | None = None) -> ProjectDetailResponse:
@@ -89,6 +106,10 @@ class ProjectService:
 
         project_name = requested_name or Path(unquote(parsed.path)).stem or "projeto-bambu-link"
         layout = self.storage.create_project_layout(project_name)
+        logger.info(
+            "project_import_from_url_started",
+            extra={"project_name": project_name, "url": url, "storage_path": str(layout["folders"]["root"])},
+        )
         downloaded_file = self.download_project_url(url, layout["folders"]["original"], project_name)
         return self.create_project_from_saved_files([downloaded_file], layout, project_name, origin_url=url)
 
@@ -100,6 +121,15 @@ class ProjectService:
         origin_url: str | None,
     ) -> ProjectDetailResponse:
         total_size_mb = sum(file_path.stat().st_size for file_path in saved_files if file_path.exists()) / (1024 * 1024)
+        logger.info(
+            "project_saved_files_received",
+            extra={
+                "project_name": project_name,
+                "saved_file_count": len(saved_files),
+                "saved_files": [file_path.name for file_path in saved_files],
+                "total_size_mb": round(total_size_mb, 2),
+            },
+        )
         if total_size_mb > self.settings.max_upload_size_mb:
             raise ValueError(
                 f"O upload excede o limite configurado de {self.settings.max_upload_size_mb} MB por projeto."
@@ -108,6 +138,17 @@ class ProjectService:
         detected = self.format_service.detect_group(saved_files)
         primary_source = self.select_primary_input(saved_files)
         upload_intake = self.build_upload_intake_summary(primary_source, detected, parser_result)
+        logger.info(
+            "project_input_inspected",
+            extra={
+                "project_name": project_name,
+                "primary_source": primary_source.name if primary_source else None,
+                "source_ecosystem": detected.get("source_ecosystem"),
+                "input_formats": detected.get("input_formats"),
+                "parser_error_count": len(parser_result.errors),
+                "parser_warning_count": len(parser_result.warnings),
+            },
+        )
 
         now = datetime.now(tz=timezone.utc)
         previews = self.collect_previews(saved_files, layout["folders"]["previews"])
@@ -193,9 +234,19 @@ class ProjectService:
         manifest["manifest"] = project_manifest
         manifest["logs"] = [{"label": "processing.log", "path": self.storage.to_storage_url(layout["folders"]["logs"] / "processing.log"), "kind": "log"}]
         self.storage.save_manifest(manifest)
+        logger.info(
+            "project_create_completed",
+            extra={
+                "project_id": layout["version_name"],
+                "project_name": project_name,
+                "status": manifest["status"],
+                "storage_path": str(layout["folders"]["root"]),
+            },
+        )
         return ProjectDetailResponse(**manifest)
 
     def download_project_url(self, url: str, target_dir: Path, project_name: str) -> Path:
+        logger.info("project_download_started", extra={"project_name": project_name, "url": url})
         request = Request(
             url,
             headers={
@@ -224,13 +275,19 @@ class ProjectService:
         except ValueError:
             raise
         except HTTPError as exc:
+            logger.warning(
+                "project_download_http_error",
+                extra={"project_name": project_name, "url": url, "status_code": exc.code, "reason": exc.reason},
+            )
             parsed = urlparse(url)
             if exc.code in {401, 403} and self.is_makerworld_host(parsed):
                 raise ValueError(self.makerworld_blocked_error()) from exc
             raise ValueError(f"Falha ao baixar o projeto pela URL informada: HTTP {exc.code}: {exc.reason}") from exc
         except URLError as exc:
+            logger.warning("project_download_url_error", extra={"project_name": project_name, "url": url, "reason": str(exc.reason)})
             raise ValueError(f"Falha ao baixar o projeto pela URL informada: {exc.reason}") from exc
         except Exception as exc:  # noqa: BLE001
+            logger.exception("project_download_unexpected_error", extra={"project_name": project_name, "url": url})
             raise ValueError(f"Falha ao baixar o projeto pela URL informada: {exc}") from exc
 
         if destination.suffix.lower() not in DIRECT_PROJECT_SUFFIXES:
@@ -245,6 +302,10 @@ class ProjectService:
             else:
                 destination.unlink(missing_ok=True)
                 raise ValueError("A URL nao retornou um arquivo 3D direto. Use um link de download do arquivo .3mf/.stl/.zip.")
+        logger.info(
+            "project_download_completed",
+            extra={"project_name": project_name, "url": url, "destination": str(destination), "bytes_written": written},
+        )
         return destination
 
     def is_makerworld_host(self, parsed: Any) -> bool:
