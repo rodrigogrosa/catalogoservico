@@ -18,6 +18,7 @@ function parseRemoteOrigin(origin: string | undefined) {
 }
 
 const backendOrigin = parseRemoteOrigin(process.env.NEXT_PUBLIC_BACKEND_ORIGIN);
+const backendOriginRaw = process.env.NEXT_PUBLIC_BACKEND_ORIGIN;
 const remotePatterns: Array<{
   protocol: "http" | "https";
   hostname: string;
@@ -40,6 +41,22 @@ if (backendOrigin) {
 }
 
 const nextConfig: NextConfig = {
+  async rewrites() {
+    if (!backendOriginRaw) {
+      return [];
+    }
+
+    return [
+      {
+        source: "/api/v1/:path*",
+        destination: `${backendOriginRaw}/api/v1/:path*`,
+      },
+      {
+        source: "/storage/:path*",
+        destination: `${backendOriginRaw}/storage/:path*`,
+      },
+    ];
+  },
   images: {
     remotePatterns,
   },
