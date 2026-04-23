@@ -1,0 +1,18 @@
+[
+  {
+    "parameter": "raft_first_layer_expansion",
+    "status": "fallback_substitution"
+  },
+  {
+    "parameter": "solid_infill_filament",
+    "status": "fallback_substitution"
+  },
+  {
+    "parameter": "use_relative_e_distances",
+    "status": "fallback_substitution"
+  },
+  {
+    "parameter": "before_layer_change_gcode",
+    "status": "fallback_substitution"
+  }
+]

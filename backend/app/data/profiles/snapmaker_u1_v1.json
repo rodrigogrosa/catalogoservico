@@ -1,0 +1,123 @@
+{
+  "profile_id": "snapmaker_u1_v1",
+  "machine_name": "Snapmaker U1",
+  "profile_version": "2026.04.13",
+  "slicer_target": "Snapmaker Orca 2.3.0",
+  "build_volume_mm": {
+    "x": 270,
+    "y": 270,
+    "z": 270
+  },
+  "default_nozzle_mm": 0.4,
+  "supported_nozzles_mm": [0.4, 0.6, 0.8],
+  "safe_defaults": {
+    "line_width_mm": 0.42,
+    "layer_height_mm": 0.2,
+    "initial_layer_height_mm": 0.22,
+    "initial_layer_speed_mm_s": 18,
+    "initial_layer_acceleration_mm_s2": 250,
+    "travel_speed_mm_s": 220
+  },
+  "objective_presets": {
+    "quality": {
+      "layer_height_mm": 0.16,
+      "wall_loops": 3,
+      "infill_density_percent": 12,
+      "speed_factor": 0.8
+    },
+    "balanced": {
+      "layer_height_mm": 0.2,
+      "wall_loops": 3,
+      "infill_density_percent": 15,
+      "speed_factor": 1.0
+    },
+    "speed": {
+      "layer_height_mm": 0.28,
+      "wall_loops": 2,
+      "infill_density_percent": 10,
+      "speed_factor": 1.15
+    },
+    "strength": {
+      "layer_height_mm": 0.24,
+      "wall_loops": 4,
+      "infill_density_percent": 25,
+      "speed_factor": 0.92
+    },
+    "character_decorative": {
+      "layer_height_mm": 0.16,
+      "wall_loops": 2,
+      "infill_density_percent": 8,
+      "speed_factor": 0.85
+    },
+    "functional_part": {
+      "layer_height_mm": 0.2,
+      "wall_loops": 4,
+      "infill_density_percent": 25,
+      "speed_factor": 0.95
+    },
+    "large_part": {
+      "layer_height_mm": 0.24,
+      "wall_loops": 3,
+      "infill_density_percent": 12,
+      "speed_factor": 1.0
+    },
+    "tall_slender": {
+      "layer_height_mm": 0.2,
+      "wall_loops": 3,
+      "infill_density_percent": 12,
+      "speed_factor": 0.8
+    }
+  },
+  "material_rules": {
+    "PLA": {
+      "nozzle_temp_c": [200, 220],
+      "bed_temp_c": [45, 60],
+      "enclosure_required": false,
+      "warping_risk": "low",
+      "abrasive": false,
+      "minimum_nozzle_mm": 0.4,
+      "adhesion_bias": "skirt_or_brim"
+    },
+    "PETG": {
+      "nozzle_temp_c": [230, 250],
+      "bed_temp_c": [70, 90],
+      "enclosure_required": false,
+      "warping_risk": "medium",
+      "abrasive": false,
+      "minimum_nozzle_mm": 0.4,
+      "adhesion_bias": "brim"
+    },
+    "ASA": {
+      "nozzle_temp_c": [245, 265],
+      "bed_temp_c": [95, 110],
+      "enclosure_required": true,
+      "warping_risk": "high",
+      "abrasive": false,
+      "minimum_nozzle_mm": 0.4,
+      "adhesion_bias": "brim_or_raft"
+    },
+    "TPU": {
+      "nozzle_temp_c": [215, 235],
+      "bed_temp_c": [40, 60],
+      "enclosure_required": false,
+      "warping_risk": "low",
+      "abrasive": false,
+      "minimum_nozzle_mm": 0.4,
+      "adhesion_bias": "skirt_or_brim"
+    },
+    "PA-CF": {
+      "nozzle_temp_c": [270, 300],
+      "bed_temp_c": [70, 100],
+      "enclosure_required": true,
+      "warping_risk": "high",
+      "abrasive": true,
+      "minimum_nozzle_mm": 0.6,
+      "adhesion_bias": "raft"
+    }
+  },
+  "known_constraints": [
+    "Perfis Bambu precisam ser sanitizados para Snapmaker Orca 2.3.0.",
+    "Primeira camada de peças esbeltas deve usar brim ou raft.",
+    "Materiais abrasivos exigem bico endurecido."
+  ]
+}

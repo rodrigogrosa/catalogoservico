@@ -1,0 +1,30 @@
+{
+  "status": "awaiting_user",
+  "etapa": "orquestracao_final",
+  "achados": [
+    "Unidade inferida como milimetros com baixa ambiguidade.",
+    "Overhangs detectados em 14.2% da area analisada.",
+    "Paredes finas abaixo de 0.42 mm foram encontradas."
+  ],
+  "riscos": [
+    "Peça alta e esbelta com baixa área de contato na mesa.",
+    "Um encaixe funcional pode exigir folga adicional."
+  ],
+  "perguntas_ao_usuario": [
+    {
+      "code": "fit_strategy",
+      "question": "Deseja reduzir escala ou dividir a peça em partes?",
+      "reason": "A bounding box excede o volume útil da Snapmaker U1.",
+      "severity": "high",
+      "kind": "blocking"
+    }
+  ],
+  "acoes_executadas": [
+    "Sanitização do 3MF para Snapmaker Orca 2.3.0.",
+    "Suportes automáticos e raft conservador ativados."
+  ],
+  "artefatos_gerados": [
+    "/storage/exemplo/export/modelo_snapmaker_compatible_final.3mf"
+  ],
+  "caminho_de_saida": "/Users/rodrigorosa/Downloads/Projetos3d/SnapMaker3d/exemplo/exemplo_v002"
+}

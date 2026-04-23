@@ -1,0 +1,40 @@
+{
+  "repair_mesh": true,
+  "adapt_to_snapmaker": true,
+  "convert_from_bambu": true,
+  "scale_mode": "normalize_units",
+  "unit_mode": "auto",
+  "hollowing": false,
+  "objective_preset": "functional_part",
+  "orientation_priority": "support_economy",
+  "target_nozzle_mm": 0.4,
+  "supports": "auto",
+  "target_material": "PETG",
+  "material_preferences": {
+    "use_case": "functional",
+    "thermal_resistance": false,
+    "outdoor_use": false,
+    "flexibility_required": false,
+    "desired_finish": "semi-matte",
+    "prioritize": "balanced"
+  },
+  "color_preferences": {
+    "preserve_original_colors": true,
+    "strategy": "split_parts",
+    "notes": "Preservar cores por regiões quando houver referência segura."
+  },
+  "hollowing_preferences": {
+    "enabled": false,
+    "shell_thickness_mm": 2.4,
+    "drain_holes": true,
+    "preserve_strength": true
+  },
+  "transform_preferences": {
+    "reinforce_weak_regions": true,
+    "add_helper_base": true,
+    "simplify_microdetails": false,
+    "allow_destructive_changes": false,
+    "generate_alignment_pins": true
+  },
+  "notes": "Preparar para Snapmaker Orca 2.3.0 com suporte automático e boa aderência de primeira camada."
+}

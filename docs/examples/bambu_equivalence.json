@@ -1,0 +1,23 @@
+[
+  {
+    "parameter": "use_relative_e_distances",
+    "source_value": 1,
+    "target_value": 0,
+    "status": "fallback_substitution",
+    "note": "Extrusão relativa neutralizada para compatibilidade com Snapmaker Orca."
+  },
+  {
+    "parameter": "prime_tower_width",
+    "source_value": 0,
+    "target_value": 2,
+    "status": "fallback_substitution",
+    "note": "Valor inválido no projeto original foi ajustado para o mínimo aceito pelo Orca."
+  },
+  {
+    "parameter": "painting_hints",
+    "source_value": "present",
+    "target_value": "preserved_by_parts",
+    "status": "preserved_approximately",
+    "note": "A intenção de cor foi preservada por partes, não como pintura nativa."
+  }
+]

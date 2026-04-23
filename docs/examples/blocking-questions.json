@@ -1,0 +1,16 @@
+[
+  {
+    "code": "unit_confirmation",
+    "question": "Deseja manter a escala original ou converter para milímetros?",
+    "reason": "A unidade inferida está ambígua e altera funcionalidade.",
+    "severity": "high",
+    "kind": "blocking"
+  },
+  {
+    "code": "split_or_scale",
+    "question": "Deseja dividir em partes ou reduzir a escala para caber na U1?",
+    "reason": "A peça excede o volume útil da Snapmaker U1.",
+    "severity": "high",
+    "kind": "blocking"
+  }
+]

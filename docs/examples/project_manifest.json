@@ -1,0 +1,52 @@
+{
+  "project_id": "dragon-main-parts_v004",
+  "project_name": "Dragon main parts",
+  "slug": "dragon-main-parts",
+  "version": 4,
+  "created_at": "2026-04-13T12:15:00+00:00",
+  "updated_at": "2026-04-13T12:19:42+00:00",
+  "origin": "upload",
+  "source_ecosystem": "bambu_lab",
+  "input_formats": ["3mf"],
+  "pipeline_version": "0.3.0",
+  "agent_versions": {
+    "geometry_agent": "v2",
+    "snapmaker_agent": "v2",
+    "bambu_agent": "v2",
+    "qa_agent": "v2"
+  },
+  "original_files": [
+    {
+      "name": "Dragon_main_parts.3mf",
+      "sha256": "sha256:example-original",
+      "size_bytes": 38192014
+    }
+  ],
+  "artifacts": [
+    {
+      "label": "Dragon_main_parts_snapmaker_compatible_final.3mf",
+      "sha256": "sha256:example-export",
+      "kind": "export"
+    }
+  ],
+  "parameters": {
+    "target_material": "PLA",
+    "objective_preset": "character_decorative",
+    "supports": "auto"
+  },
+  "automatic_decisions": [
+    {
+      "stage_key": "snapmaker",
+      "action": "apply_raft",
+      "reason": "Peça com base estreita e risco de tombamento."
+    }
+  ],
+  "questions_asked": [],
+  "user_answers": [],
+  "limitations": [
+    "Equivalência de painting hints preservada apenas parcialmente."
+  ],
+  "snapshot": {
+    "fallbacks": ["prime tower removida", "G-code proprietário neutralizado"]
+  }
+}

@@ -1,0 +1,630 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
+import json
+from pathlib import Path
+import secrets
+from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+from uuid import uuid4
+
+from app.core.config import get_settings
+from app.schemas.auth import AuthUser
+from app.schemas.store import (
+    ConnectorCapability,
+    ConnectorField,
+    MarketplaceConnector,
+    ProductPublishDraftResponse,
+    ProductPublishRequest,
+    StoreCreateRequest,
+    StoreOAuthAuthorizationResponse,
+    StoreOAuthCallbackResponse,
+    StoreCredentialStatus,
+    StoreResponse,
+    StoreUpdateRequest,
+)
+from app.services.project_service import ProjectService
+from app.services.storage_service import StorageService
+
+
+class StoreService:
+    def __init__(self) -> None:
+        self.settings = get_settings()
+        self.storage = StorageService()
+        self.data_dir = self.settings.storage_root / "_system"
+        self.data_path = self.data_dir / "stores.json"
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+
+    def list_connectors(self) -> list[MarketplaceConnector]:
+        return [
+            MarketplaceConnector(
+                marketplace="mercado_livre",
+                label="Mercado Livre",
+                docs_url="https://developers.mercadolivre.com.br/en_us/authentication-and-authorization",
+                auth_type="OAuth 2.0 Bearer token",
+                required_credentials=[
+                    ConnectorField(
+                        key="client_id",
+                        label="APP ID / Client ID",
+                        secret=False,
+                        group="1. Aplicação no Mercado Livre",
+                        help_text="É o ID do aplicativo exibido em DevCenter > Minhas aplicações > Configurar. Na API também aparece como client_id.",
+                        help_url="https://developers.mercadolivre.com.br/en_us/products-authentication-authorization/register-your-application",
+                    ),
+                    ConnectorField(
+                        key="client_secret",
+                        label="Chave secreta / Client Secret",
+                        secret=True,
+                        group="1. Aplicação no Mercado Livre",
+                        help_text="É a chave secreta do aplicativo. Não compartilhe fora deste ambiente local.",
+                        help_url="https://developers.mercadolivre.com.br/en_us/products-authentication-authorization/register-your-application",
+                    ),
+                    ConnectorField(
+                        key="redirect_uri",
+                        label="Redirect URI cadastrada",
+                        secret=False,
+                        group="1. Aplicação no Mercado Livre",
+                        help_text="Deve ser exatamente a mesma URL cadastrada no app. O Mercado Livre exige correspondência exata para gerar token.",
+                        help_url="https://developers.mercadolivre.com.br/en_us/authentication-and-authorization",
+                    ),
+                    ConnectorField(
+                        key="authorization_code",
+                        label="Código de autorização",
+                        secret=True,
+                        required=False,
+                        group="2. Autorização OAuth",
+                        help_text="Código temporário recebido na Redirect URI depois de autorizar a aplicação. Serve para trocar por access_token.",
+                        help_url="https://developers.mercadolivre.com.br/en_us/authentication-and-authorization",
+                    ),
+                    ConnectorField(
+                        key="access_token",
+                        label="Access Token do vendedor",
+                        secret=True,
+                        required=False,
+                        group="2. Autorização OAuth",
+                        help_text="Token Bearer usado nas chamadas privadas. Obrigatório para publicação automática real.",
+                        help_url="https://developers.mercadolivre.com.br/en_us/authentication-and-authorization",
+                    ),
+                    ConnectorField(
+                        key="refresh_token",
+                        label="Refresh Token",
+                        secret=True,
+                        required=False,
+                        group="2. Autorização OAuth",
+                        help_text="Token usado para renovar o access_token. Ele muda a cada renovação e só o último é válido.",
+                        help_url="https://developers.mercadolivre.com.br/en_us/authentication-and-authorization",
+                    ),
+                    ConnectorField(
+                        key="seller_id",
+                        label="Seller ID / User ID",
+                        secret=False,
+                        required=False,
+                        group="3. Conta vendedora",
+                        help_text="ID da conta vendedora retornado como user_id no OAuth ou via /users/me usando o access_token.",
+                        help_url="https://developers.mercadolivre.com.br/en_us/authentication-and-authorization",
+                    ),
+                ],
+                required_product_fields=[
+                    "title",
+                    "category_id",
+                    "price",
+                    "currency_id",
+                    "available_quantity",
+                    "buying_mode",
+                    "condition",
+                    "listing_type_id",
+                    "pictures",
+                ],
+                capabilities=[
+                    ConnectorCapability(key="draft_payload", label="Gerar payload de anúncio", implemented=True),
+                    ConnectorCapability(key="publish_item", label="Publicar item automaticamente", implemented=False, notes="Requer OAuth completo, categoria válida e imagens hospedadas."),
+                    ConnectorCapability(key="upload_pictures", label="Enviar imagens", implemented=False, notes="Preparado como próximo adaptador."),
+                ],
+                implementation_notes=[
+                    "Para configurar o aplicativo, preencha APP ID, Client Secret e Redirect URI.",
+                    "Para publicar de fato, autorize a conta vendedora e obtenha access_token/refresh_token via OAuth.",
+                    "A publicação real deve validar categoria, atributos obrigatórios e imagem antes do POST final.",
+                    "O sistema gera payload compatível e bloqueia publish enquanto credenciais, categoria ou imagens públicas estiverem ausentes.",
+                ],
+            ),
+            MarketplaceConnector(
+                marketplace="shopee",
+                label="Shopee",
+                docs_url="https://open.shopee.com/documents/v2/v2.product.add_item?module=89&type=1",
+                auth_type="Open Platform partner_id + shop_id + signed requests",
+                required_credentials=[
+                    ConnectorField(key="partner_id", label="Partner ID", secret=False),
+                    ConnectorField(key="partner_key", label="Partner Key", secret=True),
+                    ConnectorField(key="shop_id", label="Shop ID", secret=False),
+                    ConnectorField(key="access_token", label="Access Token", secret=True),
+                ],
+                required_product_fields=[
+                    "item_name",
+                    "description",
+                    "category_id",
+                    "price_info",
+                    "stock_info",
+                    "image",
+                    "logistic_info",
+                    "weight",
+                    "dimension",
+                ],
+                capabilities=[
+                    ConnectorCapability(key="draft_payload", label="Gerar payload de anúncio", implemented=True),
+                    ConnectorCapability(key="publish_item", label="Criar produto via add_item", implemented=False, notes="Requer assinatura HMAC e categoria/logística reais."),
+                    ConnectorCapability(key="upload_image", label="Enviar imagem", implemented=False),
+                ],
+                implementation_notes=[
+                    "Shopee exige categoria, logística, peso/dimensões e assinatura de cada chamada.",
+                    "O adaptador inicial gera payload e checklist para evitar publicação incompleta.",
+                ],
+            ),
+            MarketplaceConnector(
+                marketplace="meta_instagram",
+                label="Instagram / Meta Catalog",
+                docs_url="https://developers.facebook.com/docs/marketing-api/catalog-batch/guides/send-item-updates/",
+                auth_type="Meta OAuth token com catalog_management/business_management",
+                required_credentials=[
+                    ConnectorField(key="business_id", label="Business ID", secret=False),
+                    ConnectorField(key="catalog_id", label="Catalog ID", secret=False),
+                    ConnectorField(key="access_token", label="Access Token", secret=True),
+                ],
+                required_product_fields=[
+                    "id",
+                    "title",
+                    "description",
+                    "availability",
+                    "condition",
+                    "price",
+                    "link",
+                    "image_link",
+                    "brand",
+                ],
+                capabilities=[
+                    ConnectorCapability(key="draft_payload", label="Gerar item de catálogo", implemented=True),
+                    ConnectorCapability(key="catalog_batch", label="Enviar lote para catálogo", implemented=False, notes="Requer catálogo, token e URL pública de imagem/produto."),
+                    ConnectorCapability(key="csv_feed", label="Gerar feed CSV", implemented=True),
+                ],
+                implementation_notes=[
+                    "Instagram Shopping depende de conta profissional, Business Manager e catálogo aprovado.",
+                    "A publicação via feed exige URLs públicas para página do produto e imagem principal.",
+                ],
+            ),
+            MarketplaceConnector(
+                marketplace="custom_store",
+                label="Loja própria / Genérica",
+                docs_url="",
+                auth_type="Webhook/API própria",
+                required_credentials=[
+                    ConnectorField(key="endpoint_url", label="Endpoint de publicação", secret=False),
+                    ConnectorField(key="api_key", label="API Key", secret=True, required=False),
+                ],
+                required_product_fields=["title", "description", "price", "images", "files"],
+                capabilities=[
+                    ConnectorCapability(key="draft_payload", label="Gerar payload genérico", implemented=True),
+                    ConnectorCapability(key="publish_item", label="Publicar via webhook", implemented=False, notes="Depende do contrato da loja."),
+                ],
+                implementation_notes=["Use para Shopify/WooCommerce/custom enquanto o conector específico não existir."],
+            ),
+        ]
+
+    def list_user_stores(self, user: AuthUser) -> list[StoreResponse]:
+        stores = [item for item in self.load_store_records() if item.get("owner_username") == user.username]
+        return [self.to_response(record) for record in stores]
+
+    def create_store(self, user: AuthUser, payload: StoreCreateRequest) -> StoreResponse:
+        connector = self.get_connector(payload.marketplace)
+        now = datetime.now(tz=timezone.utc).isoformat()
+        record = {
+            "id": uuid4().hex,
+            "owner_username": user.username,
+            "name": payload.name.strip(),
+            "marketplace": payload.marketplace,
+            "account_label": payload.account_label,
+            "country": payload.country,
+            "currency": payload.currency,
+            "status": self.infer_status(connector, payload.credentials),
+            "credentials": self.sanitize_credentials(payload.credentials),
+            "settings": payload.settings,
+            "created_at": now,
+            "updated_at": now,
+        }
+        records = self.load_store_records()
+        records.append(record)
+        self.write_store_records(records)
+        return self.to_response(record)
+
+    def update_store(self, user: AuthUser, store_id: str, payload: StoreUpdateRequest) -> StoreResponse | None:
+        records = self.load_store_records()
+        for record in records:
+            if record.get("id") != store_id or record.get("owner_username") != user.username:
+                continue
+            connector = self.get_connector(record["marketplace"])
+            if payload.name is not None:
+                record["name"] = payload.name.strip()
+            if payload.account_label is not None:
+                record["account_label"] = payload.account_label
+            if payload.country is not None:
+                record["country"] = payload.country
+            if payload.currency is not None:
+                record["currency"] = payload.currency
+            if payload.settings:
+                record["settings"] = {**record.get("settings", {}), **payload.settings}
+            if payload.credentials:
+                record["credentials"] = {**record.get("credentials", {}), **self.sanitize_credentials(payload.credentials)}
+            record["status"] = payload.status or self.infer_status(connector, record.get("credentials", {}))
+            record["updated_at"] = datetime.now(tz=timezone.utc).isoformat()
+            self.write_store_records(records)
+            return self.to_response(record)
+        return None
+
+    def delete_store(self, user: AuthUser, store_id: str) -> bool:
+        records = self.load_store_records()
+        kept = [record for record in records if not (record.get("id") == store_id and record.get("owner_username") == user.username)]
+        if len(kept) == len(records):
+            return False
+        self.write_store_records(kept)
+        return True
+
+    def default_mercado_livre_redirect_uri(self) -> str:
+        return f"{self.settings.public_backend_origin.rstrip('/')}/api/v1/stores/oauth/mercado-livre/callback"
+
+    def default_mercado_livre_notifications_url(self) -> str:
+        return f"{self.settings.public_backend_origin.rstrip('/')}/api/v1/stores/webhooks/mercado-livre"
+
+    def prepare_mercado_livre_oauth(self, user: AuthUser, store_id: str) -> StoreOAuthAuthorizationResponse | None:
+        records = self.load_store_records()
+        for record in records:
+            if record.get("id") != store_id or record.get("owner_username") != user.username:
+                continue
+            if record.get("marketplace") != "mercado_livre":
+                raise ValueError("OAuth automático disponível apenas para Mercado Livre.")
+            credentials = record.setdefault("credentials", {})
+            client_id = credentials.get("client_id", "").strip()
+            client_secret = credentials.get("client_secret", "").strip()
+            if not client_id or not client_secret:
+                raise ValueError("Configure APP ID e chave secreta antes de iniciar OAuth.")
+            current_redirect_uri = credentials.get("redirect_uri", "").strip()
+            redirect_uri = (
+                self.default_mercado_livre_redirect_uri()
+                if not current_redirect_uri or current_redirect_uri.startswith("http://")
+                else current_redirect_uri
+            )
+            credentials["redirect_uri"] = redirect_uri
+            state = secrets.token_urlsafe(24)
+            settings = record.setdefault("settings", {})
+            settings["mercado_livre_oauth_state"] = state
+            settings["mercado_livre_redirect_uri_to_register"] = redirect_uri
+            settings["mercado_livre_notifications_url"] = settings.get("mercado_livre_notifications_url") or self.default_mercado_livre_notifications_url()
+            settings["mercado_livre_oauth_started_at"] = datetime.now(tz=timezone.utc).isoformat()
+            record["status"] = self.infer_status(self.get_connector("mercado_livre"), credentials)
+            record["updated_at"] = datetime.now(tz=timezone.utc).isoformat()
+            self.write_store_records(records)
+            query = urlencode(
+                {
+                    "response_type": "code",
+                    "client_id": client_id,
+                    "redirect_uri": redirect_uri,
+                    "state": state,
+                }
+            )
+            return StoreOAuthAuthorizationResponse(
+                store=self.to_response(record),
+                authorization_url=f"https://auth.mercadolivre.com.br/authorization?{query}",
+                redirect_uri=redirect_uri,
+                state=state,
+                instructions=[
+                    "Cadastre a Redirect URI exatamente igual no DevCenter do Mercado Livre antes de autorizar.",
+                    "Abra a URL de autorização e faça login com a conta vendedora principal, não com operador.",
+                    "Ao voltar para o callback local, o sistema troca o código por access_token e refresh_token automaticamente.",
+                ],
+            )
+        return None
+
+    def complete_mercado_livre_oauth(self, code: str, state: str) -> StoreOAuthCallbackResponse:
+        records = self.load_store_records()
+        for record in records:
+            settings = record.get("settings", {})
+            if record.get("marketplace") != "mercado_livre" or settings.get("mercado_livre_oauth_state") != state:
+                continue
+            credentials = record.setdefault("credentials", {})
+            token_payload = self.exchange_mercado_livre_code(
+                client_id=credentials.get("client_id", ""),
+                client_secret=credentials.get("client_secret", ""),
+                code=code,
+                redirect_uri=credentials.get("redirect_uri", "") or self.default_mercado_livre_redirect_uri(),
+            )
+            credentials["authorization_code"] = code
+            credentials["access_token"] = str(token_payload.get("access_token", ""))
+            credentials["refresh_token"] = str(token_payload.get("refresh_token", ""))
+            credentials["seller_id"] = str(token_payload.get("user_id", ""))
+            settings["mercado_livre_oauth_completed_at"] = datetime.now(tz=timezone.utc).isoformat()
+            settings["mercado_livre_token_type"] = token_payload.get("token_type")
+            settings["mercado_livre_token_expires_in"] = token_payload.get("expires_in")
+            settings.pop("mercado_livre_oauth_state", None)
+            record["status"] = self.infer_status(self.get_connector("mercado_livre"), credentials)
+            record["updated_at"] = datetime.now(tz=timezone.utc).isoformat()
+            self.write_store_records(records)
+            return StoreOAuthCallbackResponse(
+                store=self.to_response(record),
+                status="oauth_configured",
+                seller_id=credentials.get("seller_id"),
+                expires_in=int(token_payload["expires_in"]) if token_payload.get("expires_in") else None,
+            )
+        raise ValueError("Estado OAuth inválido ou expirado. Gere uma nova URL de autorização na tela de Lojas.")
+
+    def record_mercado_livre_notification(
+        self,
+        payload: dict[str, Any],
+        headers: dict[str, str],
+        query: dict[str, str],
+    ) -> Path:
+        notifications_dir = self.data_dir / "mercado_livre_notifications"
+        notifications_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now(tz=timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        path = notifications_dir / f"{timestamp}.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "received_at": datetime.now(tz=timezone.utc).isoformat(),
+                    "headers": headers,
+                    "query": query,
+                    "payload": payload,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        return path
+
+    def exchange_mercado_livre_code(self, client_id: str, client_secret: str, code: str, redirect_uri: str) -> dict[str, Any]:
+        if not client_id or not client_secret or not code or not redirect_uri:
+            raise ValueError("OAuth Mercado Livre incompleto: client_id, client_secret, code e redirect_uri são obrigatórios.")
+        body = urlencode(
+            {
+                "grant_type": "authorization_code",
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "code": code,
+                "redirect_uri": redirect_uri,
+            }
+        ).encode("utf-8")
+        request = Request(
+            "https://api.mercadolibre.com/oauth/token",
+            data=body,
+            method="POST",
+            headers={
+                "accept": "application/json",
+                "content-type": "application/x-www-form-urlencoded",
+            },
+        )
+        try:
+            with urlopen(request, timeout=30) as response:  # noqa: S310 - official OAuth endpoint.
+                return json.loads(response.read().decode("utf-8"))
+        except HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise ValueError(f"Falha ao trocar código por token no Mercado Livre: HTTP {exc.code}: {detail}") from exc
+        except URLError as exc:
+            raise ValueError(f"Falha de rede no OAuth Mercado Livre: {exc.reason}") from exc
+
+    def build_publication_draft(
+        self,
+        user: AuthUser,
+        store_id: str,
+        project_id: str,
+        payload: ProductPublishRequest,
+    ) -> ProductPublishDraftResponse | None:
+        store = next((item for item in self.load_store_records() if item.get("id") == store_id and item.get("owner_username") == user.username), None)
+        if store is None:
+            return None
+        project = ProjectService().get_project(project_id)
+        if project is None:
+            return None
+
+        connector = self.get_connector(store["marketplace"])
+        product_payload = self.build_payload_for_marketplace(connector, store, project.model_dump(), payload)
+        credential_blockers = self.missing_required_credentials(connector, store.get("credentials", {}))
+        blockers = [*credential_blockers, *self.marketplace_publish_blockers(connector, store, product_payload)]
+        if payload.mode == "publish":
+            blockers.append("Publicação automática real ainda está bloqueada até o adaptador de API do marketplace ser ativado.")
+        if not product_payload.get("images"):
+            blockers.append("Nenhuma imagem pública foi encontrada. Gere/baixe imagens ou configure image_base_url.")
+
+        return ProductPublishDraftResponse(
+            status="blocked" if blockers else "draft_ready",
+            store_id=store["id"],
+            store_name=store["name"],
+            marketplace=store["marketplace"],
+            project_id=project_id,
+            can_publish=False,
+            blockers=blockers,
+            warnings=[
+                "Revise regras de propriedade intelectual antes de publicar personagens/licenciados.",
+                "Confirme prazo de produção e estoque antes de ativar anúncio.",
+            ],
+            payload=product_payload,
+            next_steps=self.next_steps(connector, blockers),
+        )
+
+    def build_payload_for_marketplace(
+        self,
+        connector: MarketplaceConnector,
+        store: dict[str, Any],
+        project: dict[str, Any],
+        request: ProductPublishRequest,
+    ) -> dict[str, Any]:
+        sales = project.get("sales_profile") or {}
+        channels = sales.get("marketplace_attributes") or []
+        channel = next((item for item in channels if self.matches_channel(connector.marketplace, item.get("marketplace", ""))), channels[0] if channels else {})
+        price = float(request.price_override_brl or sales.get("suggested_price_50_margin_brl") or 0)
+        images = self.resolve_product_images(project, request.image_base_url)
+        title = str(channel.get("title") or project.get("name") or "Produto impresso em 3D")
+        description = str(channel.get("full_description") or channel.get("description") or "Produto impresso em 3D sob demanda.")
+
+        if connector.marketplace == "mercado_livre":
+            return {
+                "title": title[:60],
+                "category_id": store.get("settings", {}).get("category_id", ""),
+                "price": round(price, 2),
+                "currency_id": "BRL",
+                "available_quantity": request.stock,
+                "buying_mode": "buy_it_now",
+                "condition": "new",
+                "listing_type_id": store.get("settings", {}).get("listing_type_id", "gold_special"),
+                "pictures": [{"source": image} for image in images],
+                "description": {"plain_text": description},
+                "attributes": channel.get("registration_attributes", []),
+                "images": images,
+            }
+        if connector.marketplace == "shopee":
+            return {
+                "item_name": title[:120],
+                "description": description,
+                "category_id": store.get("settings", {}).get("category_id", ""),
+                "price_info": [{"original_price": round(price, 2)}],
+                "stock_info": [{"stock_type": 2, "current_stock": request.stock}],
+                "image": {"image_url_list": images},
+                "weight": store.get("settings", {}).get("weight_kg", 0.1),
+                "dimension": store.get("settings", {}).get("dimension_cm", {"package_length": 15, "package_width": 15, "package_height": 8}),
+                "logistic_info": store.get("settings", {}).get("logistic_info", []),
+                "images": images,
+            }
+        if connector.marketplace == "meta_instagram":
+            product_url = request.product_url or store.get("settings", {}).get("default_product_url", "")
+            return {
+                "id": project.get("id"),
+                "title": title[:200],
+                "description": description,
+                "availability": "in stock",
+                "condition": "new",
+                "price": f"{round(price, 2)} BRL",
+                "link": product_url,
+                "image_link": images[0] if images else "",
+                "brand": store.get("settings", {}).get("brand", "SnapMaker3d Studio"),
+                "inventory": request.stock,
+                "images": images,
+            }
+        return {
+            "title": title,
+            "description": description,
+            "price": round(price, 2),
+            "currency": store.get("currency", "BRL"),
+            "stock": request.stock,
+            "images": images,
+            "project_id": project.get("id"),
+            "download_bundle": next((item.get("path") for item in project.get("bundles", []) if item.get("path")), None),
+        }
+
+    def resolve_product_images(self, project: dict[str, Any], image_base_url: str | None) -> list[str]:
+        raw_paths = [project.get("preview_url")] + [item.get("path") for item in project.get("previews", [])]
+        public_paths: list[str] = []
+        for raw_path in raw_paths:
+            if not raw_path:
+                continue
+            path = str(raw_path)
+            if not path.lower().split("?")[0].endswith((".png", ".jpg", ".jpeg", ".webp")):
+                continue
+            if path.startswith("http"):
+                public_paths.append(path)
+            elif image_base_url:
+                public_paths.append(f"{image_base_url.rstrip('/')}{path}")
+        return list(dict.fromkeys(public_paths))
+
+    def next_steps(self, connector: MarketplaceConnector, blockers: list[str]) -> list[str]:
+        steps = ["Revise o payload gerado na tela antes de publicar."]
+        if blockers:
+            steps.append("Resolva os bloqueios listados antes de ativar publicação automática.")
+        steps.extend(connector.implementation_notes)
+        return steps
+
+    def marketplace_publish_blockers(
+        self,
+        connector: MarketplaceConnector,
+        store: dict[str, Any],
+        product_payload: dict[str, Any],
+    ) -> list[str]:
+        credentials = store.get("credentials", {})
+        blockers: list[str] = []
+        if connector.marketplace == "mercado_livre":
+            if not credentials.get("access_token"):
+                blockers.append("Mercado Livre: access_token do vendedor ausente. Gere via OAuth antes de publicar automaticamente.")
+            if not product_payload.get("category_id"):
+                blockers.append("Mercado Livre: category_id ausente. Configure a categoria MLB correta do produto.")
+            if not product_payload.get("listing_type_id"):
+                blockers.append("Mercado Livre: listing_type_id ausente.")
+        return blockers
+
+    def missing_required_credentials(self, connector: MarketplaceConnector, credentials: dict[str, str]) -> list[str]:
+        missing = []
+        for field in connector.required_credentials:
+            if field.required and not credentials.get(field.key):
+                missing.append(f"Credencial obrigatória ausente: {field.label}.")
+        return missing
+
+    def infer_status(self, connector: MarketplaceConnector, credentials: dict[str, str]) -> str:
+        return "configured" if not self.missing_required_credentials(connector, credentials) else "needs_credentials"
+
+    def to_response(self, record: dict[str, Any]) -> StoreResponse:
+        connector = self.get_connector(record["marketplace"])
+        credentials = record.get("credentials", {})
+        return StoreResponse(
+            id=record["id"],
+            owner_username=record["owner_username"],
+            name=record["name"],
+            marketplace=record["marketplace"],
+            marketplace_label=connector.label,
+            account_label=record.get("account_label"),
+            status=record.get("status", "draft"),
+            country=record.get("country", "BR"),
+            currency=record.get("currency", "BRL"),
+            credential_status=[
+                StoreCredentialStatus(
+                    key=field.key,
+                    configured=bool(credentials.get(field.key)),
+                    masked_value=self.mask_secret(credentials.get(field.key), field.secret),
+                )
+                for field in connector.required_credentials
+            ],
+            settings=record.get("settings", {}),
+            created_at=datetime.fromisoformat(record["created_at"]),
+            updated_at=datetime.fromisoformat(record["updated_at"]),
+        )
+
+    def get_connector(self, marketplace: str) -> MarketplaceConnector:
+        for connector in self.list_connectors():
+            if connector.marketplace == marketplace:
+                return connector
+        return self.list_connectors()[-1]
+
+    def sanitize_credentials(self, credentials: dict[str, str]) -> dict[str, str]:
+        return {key: value.strip() for key, value in credentials.items() if value and value.strip()}
+
+    def mask_secret(self, value: str | None, secret: bool) -> str | None:
+        if not value:
+            return None
+        if not secret:
+            return value
+        if len(value) <= 6:
+            return "***"
+        return f"{value[:2]}***{value[-4:]}"
+
+    def matches_channel(self, marketplace: str, channel_name: str) -> bool:
+        normalized = channel_name.lower()
+        if marketplace == "mercado_livre":
+            return "mercado" in normalized
+        if marketplace == "shopee":
+            return "shopee" in normalized
+        if marketplace == "meta_instagram":
+            return "instagram" in normalized or "meta" in normalized
+        return False
+
+    def load_store_records(self) -> list[dict[str, Any]]:
+        if not self.data_path.exists():
+            return []
+        return json.loads(self.data_path.read_text(encoding="utf-8"))
+
+    def write_store_records(self, records: list[dict[str, Any]]) -> None:
+        self.data_path.write_text(json.dumps(records, indent=2, ensure_ascii=False), encoding="utf-8")

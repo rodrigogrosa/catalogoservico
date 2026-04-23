@@ -1,0 +1,13 @@
+{
+  "score": 88,
+  "level": "medium",
+  "blockers": [],
+  "warnings": [
+    "Bridge longa detectada acima de cavidade aberta.",
+    "Detalhes menores que o diâmetro do nozzle podem perder definição."
+  ],
+  "recommendations": [
+    "Usar suporte de interface densa nessa região.",
+    "Manter nozzle 0.4 mm e altura de camada conservadora."
+  ]
+}

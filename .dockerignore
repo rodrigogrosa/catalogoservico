@@ -1,0 +1,12 @@
+.DS_Store
+.git
+frontend/.next
+frontend/node_modules
+backend/.venv
+backend/__pycache__
+backend/.pytest_cache
+**/__pycache__
+**/.pytest_cache
+*.pyc
+*.pyo
+.docker-storage

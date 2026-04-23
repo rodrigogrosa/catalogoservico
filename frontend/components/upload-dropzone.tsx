@@ -1,0 +1,229 @@
+"use client";
+
+import { useRef, useState } from "react";
+
+import { importProjectFromUrl, uploadProject, type ProjectDetail } from "@/lib/api";
+
+type Props = {
+  onUploaded: (project?: ProjectDetail) => Promise<void> | void;
+  compact?: boolean;
+};
+
+const accepted = ".stl,.slt,.3mf,.obj,.mtl,.png,.jpg,.jpeg,.step,.stp,.amf,.zip";
+
+export function UploadDropzone({ onUploaded, compact = false }: Props) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [projectName, setProjectName] = useState("");
+  const [projectUrl, setProjectUrl] = useState("");
+  const [dragActive, setDragActive] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleFiles(files: FileList | null) {
+    const incoming = files ? Array.from(files) : [];
+    if (incoming.length === 0) return;
+    setError(null);
+    setIsUploading(true);
+    try {
+      const project = await uploadProject(incoming, projectName || undefined);
+      setProjectName("");
+      if (inputRef.current) inputRef.current.value = "";
+      await onUploaded(project);
+    } catch (uploadError) {
+      setError(uploadError instanceof Error ? uploadError.message : "Falha no upload.");
+    } finally {
+      setIsUploading(false);
+    }
+  }
+
+  async function handleImportUrl() {
+    const trimmedUrl = projectUrl.trim();
+    if (!trimmedUrl) {
+      setError("Informe um link direto da Bambu Lab ou de download do arquivo 3D.");
+      return;
+    }
+    if (isMakerWorldModelPageUrl(trimmedUrl)) {
+      setError(makerWorldPageMessage());
+      return;
+    }
+    setError(null);
+    setIsImporting(true);
+    try {
+      const project = await importProjectFromUrl(trimmedUrl, projectName || undefined);
+      setProjectName("");
+      setProjectUrl("");
+      await onUploaded(project);
+    } catch (importError) {
+      setError(importError instanceof Error ? importError.message : "Falha ao importar link.");
+    } finally {
+      setIsImporting(false);
+    }
+  }
+
+  return (
+    <section className="border-b border-slate-900/10 py-8">
+      <div
+        className={`border-y border-dashed py-8 transition md:py-10 ${dragActive ? "border-orange-500 bg-orange-500/10" : "border-slate-900/15"}`}
+        onDragEnter={(event) => {
+          event.preventDefault();
+          setDragActive(true);
+        }}
+        onDragOver={(event) => event.preventDefault()}
+        onDragLeave={(event) => {
+          event.preventDefault();
+          setDragActive(false);
+        }}
+        onDrop={(event) => {
+          event.preventDefault();
+          setDragActive(false);
+          void handleFiles(event.dataTransfer.files);
+        }}
+      >
+        <div className="space-y-5">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <p className="section-kicker">Novo projeto</p>
+              <h2 className="mt-2 max-w-3xl text-3xl font-semibold leading-tight md:text-4xl">
+                Envie arquivos 3D ou pacote Bambu.
+              </h2>
+              <p className="mt-3 max-w-3xl text-base leading-7 text-slate-600 md:text-lg">
+                STL, SLT, 3MF, OBJ/MTL, STEP, AMF e ZIP. Os resultados ficam salvos em
+                <span className="ml-1 rounded-full bg-white px-2.5 py-1 font-mono text-xs text-orange-700">~/Downloads/Projetos3d/SnapMaker3d</span>.
+              </p>
+            </div>
+            {isUploading || isImporting ? (
+              <div className="rounded-2xl border border-orange-500/20 bg-orange-500/10 px-4 py-3 text-sm font-semibold text-orange-900">
+                {isImporting ? "Importando link..." : "Enviando arquivo..."}
+              </div>
+            ) : null}
+          </div>
+          <div className="grid gap-4 md:grid-cols-[1fr_auto]">
+            <input
+              value={projectName}
+              onChange={(event) => setProjectName(event.target.value)}
+              placeholder="Nome opcional do projeto"
+              className="w-full rounded-[1.25rem] border border-slate-900/10 bg-white/90 px-5 py-4 text-lg outline-none transition placeholder:text-slate-400 focus:border-orange-500"
+            />
+            <button
+              type="button"
+              onClick={() => inputRef.current?.click()}
+              className="rounded-[1.25rem] bg-slate-950 px-7 py-4 text-lg font-semibold text-white transition hover:bg-slate-800"
+            >
+              {isUploading ? "Enviando..." : "Selecionar arquivo"}
+            </button>
+          </div>
+          <input
+            ref={inputRef}
+            type="file"
+            accept={accepted}
+            multiple
+            className="hidden"
+            onChange={(event) => void handleFiles(event.target.files)}
+          />
+          <div className="rounded-[1.4rem] border border-slate-900/10 bg-white/72 p-4">
+            <p className="text-lg font-semibold text-slate-950">Ou importar por link Bambu Lab / download direto</p>
+            <div className="mt-3 grid gap-3 md:grid-cols-[1fr_auto]">
+              <input
+                value={projectUrl}
+                onChange={(event) => setProjectUrl(event.target.value)}
+                placeholder="https://... arquivo .3mf, .stl ou .zip"
+                className="w-full rounded-[1.1rem] border border-slate-900/10 bg-white px-4 py-3 text-base outline-none transition placeholder:text-slate-400 focus:border-orange-500"
+              />
+              <button
+                type="button"
+                onClick={() => void handleImportUrl()}
+                disabled={isImporting || isUploading}
+                className="rounded-[1.1rem] border border-slate-900/10 bg-white px-5 py-3 text-base font-semibold text-slate-900 transition hover:border-orange-500/40 disabled:opacity-60"
+              >
+                {isImporting ? "Importando..." : "Importar link"}
+              </button>
+            </div>
+            <p className="mt-3 text-base leading-7 text-slate-500">
+              Links de página pública podem exigir login ou não entregar o arquivo direto. Quando isso ocorrer, use o link de download do .3mf/.zip.
+            </p>
+          </div>
+          {!compact ? (
+            <div className="grid gap-3 md:grid-cols-3">
+              <InfoChip title="Conversão segura" text="Sanitiza 3MF, layout, suportes e primeira camada." />
+              <InfoChip title="Entrega rastreável" text="Cada export recebe versão e artefatos separados." />
+              <InfoChip title="Compatibilidade" text="SLT é tratado como STL automaticamente." />
+            </div>
+          ) : null}
+          {error ? (
+            isMakerWorldError(error) ? (
+              <MakerWorldImportHelp message={error} url={projectUrl} onSelectFile={() => inputRef.current?.click()} />
+            ) : (
+              <p className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-base text-red-700">{error}</p>
+            )
+          ) : null}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function isMakerWorldError(message: string) {
+  return message.toLowerCase().includes("makerworld");
+}
+
+function isMakerWorldModelPageUrl(value: string) {
+  try {
+    const parsed = new URL(value);
+    const host = parsed.hostname.toLowerCase();
+    return (host === "makerworld.com" || host.endsWith(".makerworld.com")) && parsed.pathname.includes("/models/");
+  } catch {
+    return false;
+  }
+}
+
+function makerWorldPageMessage() {
+  return [
+    "Esse link do MakerWorld abre a pagina do modelo e destaca o botao Baixar 3MF, mas nao e um link direto do arquivo.",
+    "Por seguranca, o backend nao consegue usar a sessao logada do seu navegador nem receber a parte depois de #.",
+    "Abra o link, baixe o .3mf ou .zip e envie o arquivo baixado pelo botao Selecionar arquivo.",
+  ].join(" ");
+}
+
+function MakerWorldImportHelp({ message, onSelectFile, url }: { message: string; onSelectFile: () => void; url: string }) {
+  return (
+    <div className="rounded-[1.35rem] border border-orange-200 bg-orange-50 px-4 py-4 text-orange-950">
+      <p className="text-sm font-semibold uppercase tracking-[0.18em] text-orange-700">MakerWorld exige download pelo navegador</p>
+      <p className="mt-2 text-base leading-7">{message}</p>
+      <div className="mt-4 grid gap-2 text-sm leading-6 text-orange-900 md:grid-cols-2">
+        <p className="rounded-2xl bg-white/70 p-3">1. Abra o link no navegador e faça login, se necessário.</p>
+        <p className="rounded-2xl bg-white/70 p-3">2. Clique em Baixar 3MF ou All files.</p>
+        <p className="rounded-2xl bg-white/70 p-3">3. Envie aqui o arquivo .3mf ou .zip baixado.</p>
+        <p className="rounded-2xl bg-white/70 p-3">4. Link direto terminado em .3mf/.zip continua aceito.</p>
+      </div>
+      <div className="mt-4 flex flex-wrap gap-3">
+        {url ? (
+        <a
+          href={url}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex rounded-full bg-slate-950 px-5 py-3 text-sm font-semibold text-white"
+        >
+          Abrir MakerWorld
+        </a>
+        ) : null}
+        <button
+          type="button"
+          onClick={onSelectFile}
+          className="inline-flex rounded-full border border-orange-300 bg-white px-5 py-3 text-sm font-semibold text-orange-900"
+        >
+          Enviar .3mf baixado
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function InfoChip({ title, text }: { title: string; text: string }) {
+  return (
+    <div className="rounded-[1.25rem] border border-slate-900/10 bg-white/70 px-4 py-4">
+      <p className="text-sm font-semibold text-slate-900">{title}</p>
+      <p className="mt-1 text-sm leading-6 text-slate-600">{text}</p>
+    </div>
+  );
+}
