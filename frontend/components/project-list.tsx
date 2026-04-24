@@ -4,7 +4,8 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 
 import { StatusBadge } from "@/components/status-badge";
-import { deleteProject, fileUrl, ProjectSummary } from "@/lib/api";
+import { deleteProject, fetchProjectBundle, fileUrl, ProjectSummary } from "@/lib/api";
+import { downloadUrlToUser } from "@/lib/download";
 
 type Props = {
   items: ProjectSummary[];
@@ -30,7 +31,9 @@ export function ProjectList({
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<(typeof filters)[number]["value"]>("all");
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [downloadStatus, setDownloadStatus] = useState<string | null>(null);
 
   const filtered = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -87,6 +90,7 @@ export function ProjectList({
 
       <div className="mt-7 space-y-5">
         {deleteError ? <div className="rounded-[1.3rem] border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{deleteError}</div> : null}
+        {downloadStatus ? <div className="rounded-[1.3rem] border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{downloadStatus}</div> : null}
         {filtered.length === 0 ? (
           <div className="rounded-[1.4rem] border border-dashed border-slate-900/10 px-5 py-8 text-base text-slate-600">
             Nenhum projeto encontrado com esse filtro.
@@ -96,6 +100,23 @@ export function ProjectList({
             <ProjectCard
               key={project.id}
               deleting={deletingId === project.id}
+              downloading={downloadingId === project.id}
+              onDownload={async () => {
+                setDeleteError(null);
+                setDownloadStatus(null);
+                setDownloadingId(project.id);
+                try {
+                  const bundle = await fetchProjectBundle(project.id);
+                  const href = fileUrl(bundle.path);
+                  if (!href) throw new Error("bundle_missing");
+                  await downloadUrlToUser(href, bundle.label);
+                  setDownloadStatus(`Projeto ${project.name} pronto para salvar.`);
+                } catch (error) {
+                  setDeleteError(error instanceof Error ? error.message : "Falha ao baixar projeto.");
+                } finally {
+                  setDownloadingId(null);
+                }
+              }}
               onDelete={async () => {
                 if (project.status === "processing") {
                   setDeleteError("Não é seguro excluir um projeto em processamento.");
@@ -123,7 +144,19 @@ export function ProjectList({
   );
 }
 
-function ProjectCard({ deleting, onDelete, project }: { deleting: boolean; onDelete: () => void; project: ProjectSummary }) {
+function ProjectCard({
+  deleting,
+  downloading,
+  onDelete,
+  onDownload,
+  project,
+}: {
+  deleting: boolean;
+  downloading: boolean;
+  onDelete: () => void;
+  onDownload: () => void;
+  project: ProjectSummary;
+}) {
   const score = project.printable_score;
   const riskLabel = score ? `${score.score}/100 · risco ${score.level}` : "score pendente";
   const previewHref = fileUrl(project.preview_url);
@@ -174,6 +207,14 @@ function ProjectCard({ deleting, onDelete, project }: { deleting: boolean; onDel
             <Link href={`/projects/${project.id}`} className="portal-action portal-action-primary">
               Abrir projeto
             </Link>
+            <button
+              type="button"
+              disabled={downloading}
+              onClick={onDownload}
+              className="portal-action"
+            >
+              {downloading ? "Preparando download..." : "Baixar projeto"}
+            </button>
             <button
               type="button"
               disabled={deleting || project.status === "processing"}
