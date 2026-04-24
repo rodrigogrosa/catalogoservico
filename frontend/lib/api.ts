@@ -424,6 +424,14 @@ type ApiFetchOptions = {
   directToBackend?: boolean;
 };
 
+const TRANSIENT_UPSTREAM_STATUS = new Set([502, 503, 504]);
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 async function apiFetch(path: string, init?: RequestInit, options?: ApiFetchOptions): Promise<Response> {
   const url = options?.directToBackend ? buildDirectBackendUrl(path) : buildRequestUrl(path);
   const controller = new AbortController();
@@ -449,6 +457,37 @@ async function apiFetch(path: string, init?: RequestInit, options?: ApiFetchOpti
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function apiFetchResilient(path: string, init?: RequestInit, timeoutMs = 20000): Promise<Response> {
+  const primary = await apiFetch(path, init, { timeoutMs });
+  if (!TRANSIENT_UPSTREAM_STATUS.has(primary.status)) {
+    return primary;
+  }
+
+  if (typeof window !== "undefined") {
+    console.warn("[SnapMaker3d] Transient upstream response, retrying request", {
+      path,
+      method: init?.method ?? "GET",
+      status: primary.status,
+    });
+  }
+
+  await delay(400);
+  const retry = await apiFetch(path, init, { timeoutMs });
+  if (!TRANSIENT_UPSTREAM_STATUS.has(retry.status)) {
+    return retry;
+  }
+
+  if (typeof window !== "undefined") {
+    console.warn("[SnapMaker3d] Proxy still unstable, retrying against direct backend", {
+      path,
+      method: init?.method ?? "GET",
+      status: retry.status,
+    });
+  }
+
+  return apiFetch(path, init, { timeoutMs, directToBackend: true });
 }
 
 async function uploadWithFallback(path: string, init?: RequestInit, timeoutMs = 10 * 60 * 1000): Promise<Response> {
@@ -510,14 +549,14 @@ export function fileUrl(url?: string | null): string | undefined {
 }
 
 export async function fetchProjects(): Promise<ProjectSummary[]> {
-  const response = await apiFetch("/projects", { cache: "no-store", headers: authHeaders() });
+  const response = await apiFetchResilient("/projects", { cache: "no-store", headers: authHeaders() });
   if (!response.ok) throw await parseApiError(response, "Falha ao carregar projetos");
   const data = await response.json();
   return data.items;
 }
 
 export async function fetchProject(id: string): Promise<ProjectDetail> {
-  const response = await apiFetch(`/projects/${id}`, { cache: "no-store", headers: authHeaders() });
+  const response = await apiFetchResilient(`/projects/${id}`, { cache: "no-store", headers: authHeaders() });
   if (!response.ok) throw await parseApiError(response, "Falha ao carregar projeto");
   return response.json();
 }
@@ -589,25 +628,25 @@ export async function compareProjects(baseId: string, otherId: string): Promise<
 }
 
 export async function loginMaster(username: string, password: string): Promise<AuthSession> {
-  const response = await apiFetch("/auth/login", {
+  const response = await apiFetchResilient("/auth/login", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ username, password }),
-  });
+  }, 25000);
   if (!response.ok) throw await parseApiError(response, "Falha ao autenticar.");
   return response.json();
 }
 
 export async function fetchCurrentUser(): Promise<AuthUser> {
-  const response = await apiFetch("/auth/me", { cache: "no-store", headers: authHeaders() });
+  const response = await apiFetchResilient("/auth/me", { cache: "no-store", headers: authHeaders() });
   if (!response.ok) throw await parseApiError(response, "Sessao invalida ou expirada.");
   return response.json();
 }
 
 export async function fetchOAuthProviders(): Promise<OAuthProviderStatus[]> {
-  const response = await apiFetch("/auth/providers", { cache: "no-store" });
+  const response = await apiFetchResilient("/auth/providers", { cache: "no-store" });
   if (!response.ok) throw await parseApiError(response, "Falha ao carregar provedores de login.");
   const payload = await response.json();
   return payload.providers;
