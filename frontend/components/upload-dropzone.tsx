@@ -64,7 +64,7 @@ export function UploadDropzone({ onUploaded, compact = false }: Props) {
   return (
     <section className="hero-panel overflow-hidden rounded-[2rem] px-6 py-7 md:px-8 md:py-8">
       <div
-        className={`rounded-[1.7rem] border-2 border-dashed px-4 py-7 transition md:px-6 md:py-8 ${dragActive ? "border-orange-500 bg-orange-500/10" : "border-slate-900/10 bg-white/42"}`}
+        className={`rounded-[1.7rem] border-2 border-dashed px-4 py-6 transition md:px-6 md:py-7 ${dragActive ? "border-orange-500 bg-orange-500/10" : "border-slate-900/10 bg-white/42"}`}
         onDragEnter={(event) => {
           event.preventDefault();
           setDragActive(true);
@@ -82,13 +82,17 @@ export function UploadDropzone({ onUploaded, compact = false }: Props) {
       >
         <div className="space-y-5">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-            <div>
-              <p className="section-kicker">Central de entrada</p>
-              <h2 className="mt-2 max-w-3xl text-3xl font-semibold leading-tight md:text-4xl">
-                Importe modelos, pacotes Bambu e bibliotecas dependentes.
+            <div className="max-w-3xl">
+              <p className="section-kicker">{compact ? "Novo projeto" : "Central de entrada"}</p>
+              <h2 className={`mt-2 font-semibold leading-tight text-slate-950 ${compact ? "text-2xl md:text-3xl" : "text-3xl md:text-4xl"}`}>
+                {compact
+                  ? "Envie um arquivo ou importe por link direto."
+                  : "Importe modelos, pacotes Bambu e bibliotecas dependentes."}
               </h2>
-              <p className="mt-3 max-w-3xl text-base leading-7 text-slate-600 md:text-lg">
-                Aceite STL, SLT, 3MF, OBJ/MTL, STEP, AMF e ZIP com uma experiência única de importação, validação e catalogação.
+              <p className={`mt-3 text-slate-600 ${compact ? "max-w-2xl text-base leading-7" : "max-w-3xl text-base leading-7 md:text-lg"}`}>
+                {compact
+                  ? "STL, SLT, 3MF, OBJ/MTL, STEP, AMF e ZIP em um fluxo único, seguro e versionado."
+                  : "Aceite STL, SLT, 3MF, OBJ/MTL, STEP, AMF e ZIP com uma experiência única de importação, validação e catalogação."}
               </p>
             </div>
             {isUploading || isImporting ? (
@@ -97,58 +101,74 @@ export function UploadDropzone({ onUploaded, compact = false }: Props) {
               </div>
             ) : null}
           </div>
-          <div className="grid gap-4 md:grid-cols-[1fr_auto]">
-            <input
-              value={projectName}
-              onChange={(event) => setProjectName(event.target.value)}
-              placeholder="Nome comercial ou interno do projeto"
-              className="w-full rounded-[1.25rem] border border-slate-900/10 bg-white/90 px-5 py-4 text-lg outline-none transition placeholder:text-slate-400 focus:border-orange-500"
-            />
-            <button
-              type="button"
-              onClick={() => inputRef.current?.click()}
-              className="rounded-[1.25rem] bg-slate-950 px-7 py-4 text-lg font-semibold text-white transition hover:bg-slate-800"
-            >
-              {isUploading ? "Enviando..." : "Selecionar arquivos"}
-            </button>
-          </div>
-          <input
-            ref={inputRef}
-            type="file"
-            accept={accepted}
-            multiple
-            className="hidden"
-            onChange={(event) => void handleFiles(event.target.files)}
-          />
-          <div className="rounded-[1.4rem] border border-slate-900/10 bg-white/72 p-4">
-            <p className="text-lg font-semibold text-slate-950">Ou importar por link de download</p>
-            <div className="mt-3 grid gap-3 md:grid-cols-[1fr_auto]">
+
+          <div className={`grid gap-4 ${compact ? "xl:grid-cols-[1.2fr_0.9fr]" : ""}`}>
+            <div className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-[1fr_auto]">
+                <input
+                  value={projectName}
+                  onChange={(event) => setProjectName(event.target.value)}
+                  placeholder="Nome do projeto"
+                  className="w-full rounded-[1.25rem] border border-slate-900/10 bg-white/90 px-5 py-4 text-lg outline-none transition placeholder:text-slate-400 focus:border-orange-500"
+                />
+                <button
+                  type="button"
+                  onClick={() => inputRef.current?.click()}
+                  className="rounded-[1.25rem] bg-slate-950 px-7 py-4 text-lg font-semibold text-white transition hover:bg-slate-800"
+                >
+                  {isUploading ? "Enviando..." : "Selecionar arquivos"}
+                </button>
+              </div>
               <input
-                value={projectUrl}
-                onChange={(event) => setProjectUrl(event.target.value)}
-                placeholder="https://... arquivo .3mf, .stl ou .zip"
-                className="w-full rounded-[1.1rem] border border-slate-900/10 bg-white px-4 py-3 text-base outline-none transition placeholder:text-slate-400 focus:border-orange-500"
+                ref={inputRef}
+                type="file"
+                accept={accepted}
+                multiple
+                className="hidden"
+                onChange={(event) => void handleFiles(event.target.files)}
               />
-              <button
-                type="button"
-                onClick={() => void handleImportUrl()}
-                disabled={isImporting || isUploading}
-                className="rounded-[1.1rem] border border-slate-900/10 bg-white px-5 py-3 text-base font-semibold text-slate-900 transition hover:border-orange-500/40 disabled:opacity-60"
-              >
-                {isImporting ? "Importando..." : "Importar link"}
-              </button>
+
+              {!compact ? (
+                <div className="grid gap-3 md:grid-cols-3">
+                  <InfoChip title="Fluxo seguro" text="Sanitiza 3MF, layout e parâmetros críticos antes do processamento." />
+                  <InfoChip title="Rastreabilidade" text="Cada saída recebe versão própria e artefatos separados." />
+                  <InfoChip title="Compatibilidade imediata" text="SLT é tratado como STL e dependências de OBJ são agrupadas." />
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-2 text-sm text-slate-600">
+                  <MinimalTag text="STL / SLT / 3MF" />
+                  <MinimalTag text="OBJ + MTL + texturas" />
+                  <MinimalTag text="STEP / AMF / ZIP" />
+                </div>
+              )}
             </div>
-            <p className="mt-3 text-base leading-7 text-slate-500">
-              Se o marketplace bloquear o download direto, baixe o arquivo no navegador e envie-o manualmente por esta área.
-            </p>
+
+            <div className="rounded-[1.35rem] border border-slate-900/10 bg-white/72 p-4 md:p-5">
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">Importar por link</p>
+              <p className="mt-2 text-lg font-semibold text-slate-950">
+                {compact ? "Use URL direta do arquivo" : "Ou importar por link de download"}
+              </p>
+              <div className="mt-3 grid gap-3">
+                <input
+                  value={projectUrl}
+                  onChange={(event) => setProjectUrl(event.target.value)}
+                  placeholder="https://... arquivo .3mf, .stl ou .zip"
+                  className="w-full rounded-[1.1rem] border border-slate-900/10 bg-white px-4 py-3 text-base outline-none transition placeholder:text-slate-400 focus:border-orange-500"
+                />
+                <button
+                  type="button"
+                  onClick={() => void handleImportUrl()}
+                  disabled={isImporting || isUploading}
+                  className="rounded-[1.1rem] border border-slate-900/10 bg-white px-5 py-3 text-base font-semibold text-slate-900 transition hover:border-orange-500/40 disabled:opacity-60"
+                >
+                  {isImporting ? "Importando..." : "Importar link"}
+                </button>
+              </div>
+              <p className="mt-3 text-sm leading-6 text-slate-500 md:text-base">
+                Links de página, como MakerWorld, podem exigir download manual do `.3mf` ou `.zip`.
+              </p>
+            </div>
           </div>
-          {!compact ? (
-            <div className="grid gap-3 md:grid-cols-3">
-              <InfoChip title="Fluxo seguro" text="Sanitiza 3MF, layout e parâmetros críticos antes do processamento." />
-              <InfoChip title="Rastreabilidade" text="Cada saída recebe versão própria e artefatos separados." />
-              <InfoChip title="Compatibilidade imediata" text="SLT é tratado como STL e dependências de OBJ são agrupadas." />
-            </div>
-          ) : null}
           {error ? (
             isMakerWorldError(error) ? (
               <MakerWorldImportHelp message={error} url={projectUrl} onSelectFile={() => inputRef.current?.click()} />
@@ -224,5 +244,13 @@ function InfoChip({ title, text }: { title: string; text: string }) {
       <p className="text-sm font-semibold text-slate-900">{title}</p>
       <p className="mt-1 text-sm leading-6 text-slate-600">{text}</p>
     </div>
+  );
+}
+
+function MinimalTag({ text }: { text: string }) {
+  return (
+    <span className="rounded-full border border-slate-900/10 bg-white/70 px-3 py-1.5 text-sm font-medium text-slate-700">
+      {text}
+    </span>
   );
 }
