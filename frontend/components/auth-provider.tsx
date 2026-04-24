@@ -27,14 +27,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const [session, setSession] = useState<AuthSession | null>(null);
   const [loading, setLoading] = useState(true);
-  const isLoginPage = pathname === "/login";
+  const isPublicAuthRoute = pathname === "/login" || pathname.startsWith("/login/");
 
   useEffect(() => {
     const stored = getStoredAuthSession();
     if (!stored) {
       setSession(null);
       setLoading(false);
-      if (!isLoginPage) router.replace("/login");
+      if (!isPublicAuthRoute) router.replace("/login");
       return;
     }
 
@@ -49,9 +49,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .catch(() => {
         clearStoredAuthSession();
         setSession(null);
-        if (!isLoginPage) router.replace("/login");
+        if (!isPublicAuthRoute) router.replace("/login");
       });
-  }, [isLoginPage, router]);
+  }, [isPublicAuthRoute, router]);
 
   async function login(username: string, password: string) {
     const nextSession = await loginMaster(username, password);
@@ -77,7 +77,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [session, loading],
   );
 
-  if (!isLoginPage && loading) {
+  if (!isPublicAuthRoute && loading) {
     return (
       <main className="flex min-h-screen items-center justify-center px-6">
         <section className="panel max-w-lg p-8 text-center">
@@ -88,7 +88,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     );
   }
 
-  if (!isLoginPage && !session) {
+  if (!isPublicAuthRoute && !session) {
     return (
       <main className="flex min-h-screen items-center justify-center px-6">
         <section className="panel max-w-lg p-8 text-center">
