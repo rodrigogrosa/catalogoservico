@@ -312,11 +312,53 @@ export type StoreOAuthAuthorization = {
   instructions: string[];
 };
 
-const ORIGIN = process.env.NEXT_PUBLIC_BACKEND_ORIGIN ?? "http://localhost:8000";
-const BROWSER_API_BASE = `${ORIGIN}/api/v1`;
-const PUBLIC_API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? BROWSER_API_BASE;
-const SERVER_API_BASE = process.env.SERVER_API_BASE_URL ?? PUBLIC_API_BASE;
-const API_BASE = typeof window === "undefined" ? SERVER_API_BASE : BROWSER_API_BASE;
+const DEFAULT_BACKEND_ORIGIN = "http://localhost:8000";
+
+function normalizeOrigin(value?: string | null): string | null {
+  if (!value) return null;
+  return value.replace(/\/+$/, "");
+}
+
+function inferBrowserBackendOrigin(): string | null {
+  if (typeof window === "undefined") return null;
+
+  const { protocol, hostname } = window.location;
+
+  if (hostname === "app.euachei3d.com.br") {
+    return `${protocol}//api.euachei3d.com.br`;
+  }
+
+  if (hostname.startsWith("http--frontend--") && hostname.endsWith(".code.run")) {
+    return `${protocol}//${hostname.replace("http--frontend--", "http--backend--")}`;
+  }
+
+  if (hostname === "localhost" || hostname === "127.0.0.1") {
+    return normalizeOrigin(process.env.NEXT_PUBLIC_BACKEND_ORIGIN) ?? DEFAULT_BACKEND_ORIGIN;
+  }
+
+  return null;
+}
+
+function backendOrigin(): string {
+  if (typeof window !== "undefined") {
+    return inferBrowserBackendOrigin()
+      ?? normalizeOrigin(process.env.NEXT_PUBLIC_BACKEND_ORIGIN)
+      ?? DEFAULT_BACKEND_ORIGIN;
+  }
+
+  return normalizeOrigin(process.env.SERVER_BACKEND_ORIGIN)
+    ?? normalizeOrigin(process.env.NEXT_PUBLIC_BACKEND_ORIGIN)
+    ?? DEFAULT_BACKEND_ORIGIN;
+}
+
+function apiBase(): string {
+  if (typeof window === "undefined") {
+    return normalizeOrigin(process.env.SERVER_API_BASE_URL)
+      ?? `${backendOrigin()}/api/v1`;
+  }
+
+  return `${backendOrigin()}/api/v1`;
+}
 
 export type OAuthProviderStatus = {
   provider: string;
@@ -370,11 +412,11 @@ function authHeaders(): Record<string, string> {
 }
 
 function buildRequestUrl(path: string): string {
-  return `${API_BASE}${path}`;
+  return `${apiBase()}${path}`;
 }
 
 function buildDirectBackendUrl(path: string): string {
-  return `${ORIGIN}/api/v1${path}`;
+  return `${backendOrigin()}/api/v1${path}`;
 }
 
 type ApiFetchOptions = {
@@ -463,8 +505,7 @@ async function parseApiError(response: Response, fallback: string): Promise<Erro
 export function fileUrl(url?: string | null): string | undefined {
   if (!url) return undefined;
   if (url.startsWith("http")) return url;
-  if (typeof window !== "undefined") return `${ORIGIN}${url}`;
-  return `${ORIGIN}${url}`;
+  return `${backendOrigin()}${url}`;
 }
 
 export async function fetchProjects(): Promise<ProjectSummary[]> {
@@ -653,7 +694,7 @@ export async function buildPublicationDraft(storeId: string, projectId: string):
       ...authHeaders(),
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ mode: "draft", stock: 1, image_base_url: process.env.NEXT_PUBLIC_BACKEND_ORIGIN ?? "http://localhost:8000" }),
+    body: JSON.stringify({ mode: "draft", stock: 1, image_base_url: backendOrigin() }),
   });
   if (!response.ok) throw await parseApiError(response, "Falha ao gerar rascunho de publicação.");
   return response.json();
