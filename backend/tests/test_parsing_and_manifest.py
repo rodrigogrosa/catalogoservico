@@ -1,5 +1,6 @@
 from pathlib import Path
 import sys
+import zipfile
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
@@ -27,6 +28,29 @@ def test_safe_parser_links_obj_bundle_and_reports_missing_texture(tmp_path: Path
     assert result.linked_groups[0]["group_type"] == "obj_bundle"
     assert "color.png" in result.linked_groups[0]["missing_dependencies"]
     assert any("texturas ausentes" in warning for warning in result.warnings)
+
+
+def test_safe_parser_skips_huge_internal_3mf_model_during_upload_validation(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("SNAPMAKER_STORAGE_ROOT", str(tmp_path / "storage"))
+    monkeypatch.setenv("MAX_ARCHIVE_XML_PROBE_BYTES", "1024")
+    get_settings.cache_clear()
+
+    source = tmp_path / "heavy.3mf"
+    with zipfile.ZipFile(source, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(
+            "3D/3dmodel.model",
+            '<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources/><build/></model>',
+        )
+        archive.writestr("Metadata/project_settings.config", "{bad-json-but-not-xml}")
+        archive.writestr("3D/Objects/object_4.model", "<object>" + ("a" * 5000) + "</object>")
+
+    parser = SafeParserService()
+    result = parser.inspect_inputs([source])
+
+    assert not result.errors
+    assert any("inspeção leve aplicada em 3D/Objects/object_4.model" in warning for warning in result.warnings)
+    assert any("XML/config interno inválido em Metadata/project_settings.config" in warning for warning in result.warnings)
+    get_settings.cache_clear()
 
 
 def test_manifest_service_writes_formal_manifest_with_hashes(tmp_path: Path, monkeypatch) -> None:

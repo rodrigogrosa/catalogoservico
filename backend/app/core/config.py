@@ -28,6 +28,7 @@ class Settings(BaseModel):
     max_project_files: int = Field(default_factory=lambda: int(os.getenv("MAX_PROJECT_FILES", "32")))
     max_zip_entries: int = Field(default_factory=lambda: int(os.getenv("MAX_ZIP_ENTRIES", "500")))
     max_zip_depth: int = Field(default_factory=lambda: int(os.getenv("MAX_ZIP_DEPTH", "8")))
+    max_archive_xml_probe_bytes: int = Field(default_factory=lambda: int(os.getenv("MAX_ARCHIVE_XML_PROBE_BYTES", str(8 * 1024 * 1024))))
     max_triangles: int = Field(default_factory=lambda: int(os.getenv("MAX_TRIANGLES", "3000000")))
     stage_timeout_seconds: int = Field(default_factory=lambda: int(os.getenv("STAGE_TIMEOUT_SECONDS", "300")))
     ollama_enabled: bool = Field(default_factory=lambda: os.getenv("OLLAMA_ENABLED", "true").lower() in {"1", "true", "yes", "on"})

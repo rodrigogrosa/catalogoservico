@@ -125,8 +125,20 @@ class SafeParserService:
                 entry["status"] = "failed"
                 return
 
-            xml_candidates = [name for name in names if name.lower().endswith((".model", ".xml", ".rels", ".config"))]
-            for name in xml_candidates[:20]:
+            candidate_infos = [
+                info
+                for info in infos
+                if info.filename.lower().endswith((".model", ".xml", ".rels", ".config"))
+            ]
+            candidate_infos.sort(key=self._archive_probe_priority)
+            for info in candidate_infos[:20]:
+                name = info.filename
+                if info.file_size > self.settings.max_archive_xml_probe_bytes:
+                    warnings.append(
+                        f"{file_path.name}: inspeção leve aplicada em {name} ({info.file_size} bytes internos); "
+                        "arquivo interno muito grande para validação XML completa no upload."
+                    )
+                    continue
                 try:
                     ET.fromstring(archive.read(name))
                 except ET.ParseError:
@@ -134,6 +146,22 @@ class SafeParserService:
                         warnings.append(f"{file_path.name}: XML/config interno inválido em {name}.")
                     else:
                         errors.append(f"{file_path.name}: XML interno inválido em {name}.")
+
+    def _archive_probe_priority(self, info: zipfile.ZipInfo) -> tuple[int, int, str]:
+        name = info.filename.lower()
+        if name == "3d/3dmodel.model":
+            priority = 0
+        elif name.endswith(".config"):
+            priority = 1
+        elif name.endswith(".xml"):
+            priority = 2
+        elif name.endswith(".rels"):
+            priority = 3
+        elif "/objects/" in name and name.endswith(".model"):
+            priority = 5
+        else:
+            priority = 4
+        return priority, info.file_size, name
 
     def _validate_stl(self, file_path: Path, errors: list[str], warnings: list[str], entry: dict[str, Any]) -> None:
         with file_path.open("rb") as handle:
