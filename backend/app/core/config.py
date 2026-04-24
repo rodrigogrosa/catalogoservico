@@ -34,6 +34,7 @@ class Settings(BaseModel):
     ollama_enabled: bool = Field(default_factory=lambda: os.getenv("OLLAMA_ENABLED", "true").lower() in {"1", "true", "yes", "on"})
     ollama_base_url: str = Field(default_factory=lambda: os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434"))
     ollama_model: str = Field(default_factory=lambda: os.getenv("OLLAMA_MODEL", "qwen2.5:7b"))
+    ollama_vision_model: str = Field(default_factory=lambda: os.getenv("OLLAMA_VISION_MODEL", ""))
     ollama_timeout_seconds: float = Field(default_factory=lambda: float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "45")))
     master_username: str = Field(default_factory=lambda: os.getenv("MASTER_USERNAME", "rodrigogrosa"))
     master_password: str = Field(default_factory=lambda: os.getenv("MASTER_PASSWORD", "Violao2021@"))

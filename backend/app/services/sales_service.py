@@ -566,6 +566,9 @@ bullet_points deve ter no maximo 5 itens. hashtags deve ter no maximo 10 itens.
             "rights_note": "Confirme autoria, licenca do arquivo e permissao de uso comercial antes de vender.",
         }
 
+    def detect_character_context(self, project_name: str) -> dict[str, str | bool]:
+        return self._character_context(project_name)
+
     def _character_origin_text(self, character: dict[str, Any]) -> str:
         if character.get("is_character"):
             return (

@@ -4,9 +4,7 @@ import asyncio
 from datetime import datetime, timezone
 import logging
 from pathlib import Path
-import re
 from urllib.error import HTTPError, URLError
-from urllib.parse import unquote, urlparse
 from urllib.request import Request, urlopen
 from typing import Any
 
@@ -32,6 +30,7 @@ from app.services.knowledge_service import KnowledgeService
 from app.services.local_llm_service import LocalLlmService
 from app.services.manifest_service import ManifestService
 from app.services.mesh_analysis_service import MeshAnalysisService
+from app.services.project_naming_service import ProjectNamingService
 from app.services.preview_service import PreviewService
 from app.services.report_service import ReportService
 from app.services.safe_parser_service import SafeParserService
@@ -43,8 +42,6 @@ from app.services.storage_service import StorageService
 logger = logging.getLogger(__name__)
 
 DIRECT_PROJECT_SUFFIXES = {".3mf", ".stl", ".obj", ".step", ".stp", ".amf", ".zip"}
-SMALL_WORDS = {"da", "de", "do", "das", "dos", "e", "em", "para", "com", "of", "and", "the", "to", "from", "a"}
-
 
 class ProjectService:
     def __init__(self) -> None:
@@ -60,6 +57,7 @@ class ProjectService:
         self.local_llm = LocalLlmService()
         self.safe_parser = SafeParserService()
         self.sales_service = SalesService()
+        self.naming_service = ProjectNamingService(self.local_llm, self.sales_service)
         self.audit = AuditService()
         self.checksum = ChecksumService()
         self.manifest_service = ManifestService()
@@ -184,6 +182,10 @@ class ProjectService:
 
         now = datetime.now(tz=timezone.utc)
         previews = self.collect_previews(saved_files, layout["folders"]["previews"])
+        if origin_url:
+            project_name = self.make_friendly_project_name(project_name, previews=previews, source_url=origin_url)
+        else:
+            project_name = self.make_friendly_project_name(project_name, previews=previews)
         preview_url = self.resolve_preview_url(previews, primary_source)
         manifest = {
             "id": layout["version_name"],
@@ -277,67 +279,13 @@ class ProjectService:
         )
         return ProjectDetailResponse(**manifest)
 
-    def make_friendly_project_name(self, source_name: str, source_url: str | None = None) -> str:
-        raw = Path(source_name or "projeto-3d").stem
-        if source_url:
-            parsed = urlparse(source_url)
-            if parsed.path:
-                raw = Path(unquote(parsed.path)).stem or raw
-
-        candidate = unquote(raw)
-        candidate = candidate.replace("+", " ")
-        candidate = re.sub(r"\.(stl|3mf|obj|step|stp|amf|zip)$", "", candidate, flags=re.IGNORECASE)
-        candidate = re.sub(r"[_\-]+", " ", candidate)
-        candidate = re.sub(r"\((\d+)\)$", "", candidate).strip()
-        candidate = re.sub(
-            r"\b(snapmaker compatible|snapmaker|bambu project file|for bambu printers|profile|project|file di stampa|fixed profile|compatible|processado|plated)\b",
-            " ",
-            candidate,
-            flags=re.IGNORECASE,
-        )
-        candidate = re.sub(r"\b(v|ver|version)\s*\d+([._-]\d+)*\b", " ", candidate, flags=re.IGNORECASE)
-        candidate = re.sub(r"\b\d+%\s*scale\b", " ", candidate, flags=re.IGNORECASE)
-        candidate = re.sub(r"\bpart\s*\d+\b", " ", candidate, flags=re.IGNORECASE)
-        candidate = re.sub(r"\b(1 color|single color)\b", " Monocromático ", candidate, flags=re.IGNORECASE)
-        candidate = re.sub(r"\bams\b", " Multicor ", candidate, flags=re.IGNORECASE)
-        candidate = re.sub(r"\bmulticolor\b", " Multicor ", candidate, flags=re.IGNORECASE)
-        candidate = re.sub(r"\bmultipart(es)?\b", " Multipartes ", candidate, flags=re.IGNORECASE)
-        candidate = re.sub(r"\bfinal\b", " ", candidate, flags=re.IGNORECASE)
-        candidate = re.sub(r"\s+", " ", candidate).strip(" -_")
-        if not candidate:
-            return "Projeto 3D"
-
-        words: list[str] = []
-        for index, word in enumerate(candidate.split()):
-            lowered = word.lower()
-            if lowered.isdigit():
-                words.append(word)
-                continue
-            if index > 0 and lowered in SMALL_WORDS:
-                words.append(lowered)
-                continue
-            if lowered in {"ui", "rc2", "cf", "gf", "ams", "u1", "3d", "rc"}:
-                words.append(lowered.upper())
-                continue
-            words.append(lowered.capitalize())
-
-        title = " ".join(words)
-        replacements = {
-            " Keychain": " Chaveiro",
-            " Stand": " Suporte",
-            " Holder": " Suporte",
-            " Mount": " Suporte",
-            " Cookie Cutter": " Cortador",
-            " Fidget": " Antiestresse",
-            " Flexi": " Flex",
-            " From A To Z": " de A a Z",
-            " Toy": "",
-        }
-        for source, target in replacements.items():
-            title = title.replace(source, target)
-        title = re.sub(r"\bfrom a to z\b", "de A a Z", title, flags=re.IGNORECASE)
-        title = re.sub(r"\s+", " ", title).strip(" -_")
-        return title[:96].strip() or "Projeto 3D"
+    def make_friendly_project_name(
+        self,
+        source_name: str,
+        previews: list[dict[str, Any]] | None = None,
+        source_url: str | None = None,
+    ) -> str:
+        return self.naming_service.generate_name(source_name=source_name, previews=previews, source_url=source_url)
 
     def download_project_url(self, url: str, target_dir: Path, project_name: str) -> Path:
         logger.info("project_download_started", extra={"project_name": project_name, "url": url})
