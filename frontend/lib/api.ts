@@ -368,6 +368,41 @@ export type OAuthProviderStatus = {
   reason?: string | null;
 };
 
+export type PermissionDefinition = {
+  key: string;
+  label: string;
+  description: string;
+  category: string;
+};
+
+export type RoleDefinition = {
+  key: string;
+  label: string;
+  description: string;
+  permissions: string[];
+};
+
+export type AccessModel = {
+  permissions: PermissionDefinition[];
+  roles: RoleDefinition[];
+};
+
+export type UserRecord = {
+  id: string;
+  username: string;
+  display_name: string;
+  role: string;
+  role_label: string;
+  provider: string;
+  status: string;
+  permissions: string[];
+  granted_permissions: string[];
+  revoked_permissions: string[];
+  created_at?: string | null;
+  updated_at?: string | null;
+  last_login_at?: string | null;
+};
+
 export type SocialLoginField = {
   key: string;
   label: string;
@@ -404,6 +439,26 @@ export type SocialLoginProviderConfig = {
   fields: SocialLoginField[];
   credential_status: SocialLoginCredentialStatus[];
   notes: string[];
+};
+
+export type UserCreatePayload = {
+  username: string;
+  display_name: string;
+  role: string;
+  provider: string;
+  password?: string;
+  status: string;
+  granted_permissions: string[];
+  revoked_permissions: string[];
+};
+
+export type UserUpdatePayload = {
+  display_name?: string;
+  role?: string;
+  password?: string;
+  status?: string;
+  granted_permissions?: string[];
+  revoked_permissions?: string[];
 };
 
 function authHeaders(): Record<string, string> {
@@ -577,7 +632,7 @@ export async function uploadProject(files: File[], projectName?: string): Promis
 }
 
 export async function importProjectFromUrl(url: string, projectName?: string): Promise<ProjectDetail> {
-  const response = await apiFetch("/projects/import-url", {
+  const response = await apiFetchResilient("/projects/import-url", {
     method: "POST",
     headers: {
       ...authHeaders(),
@@ -592,7 +647,7 @@ export async function importProjectFromUrl(url: string, projectName?: string): P
 }
 
 export async function deleteProject(id: string): Promise<void> {
-  const response = await apiFetch(`/projects/${id}`, {
+  const response = await apiFetchResilient(`/projects/${id}`, {
     method: "DELETE",
     headers: authHeaders(),
   });
@@ -602,7 +657,7 @@ export async function deleteProject(id: string): Promise<void> {
 }
 
 export async function processProject(id: string, payload: ProcessPayload): Promise<ProjectSummary> {
-  const response = await apiFetch(`/projects/${id}/process`, {
+  const response = await apiFetchResilient(`/projects/${id}/process`, {
     method: "POST",
     headers: {
       ...authHeaders(),
@@ -615,14 +670,14 @@ export async function processProject(id: string, payload: ProcessPayload): Promi
 }
 
 export async function fetchProjectBundle(id: string): Promise<ArtifactReference> {
-  const response = await apiFetch(`/projects/${id}/bundle`, { cache: "no-store", headers: authHeaders() });
+  const response = await apiFetchResilient(`/projects/${id}/bundle`, { cache: "no-store", headers: authHeaders() });
   if (!response.ok) throw await parseApiError(response, "Falha ao gerar bundle");
   const data = await response.json();
   return data.bundle;
 }
 
 export async function compareProjects(baseId: string, otherId: string): Promise<ProjectCompareResponse> {
-  const response = await apiFetch(`/projects/${baseId}/compare/${otherId}`, { cache: "no-store", headers: authHeaders() });
+  const response = await apiFetchResilient(`/projects/${baseId}/compare/${otherId}`, { cache: "no-store", headers: authHeaders() });
   if (!response.ok) throw await parseApiError(response, "Falha ao comparar versões");
   return response.json();
 }
@@ -645,6 +700,12 @@ export async function fetchCurrentUser(): Promise<AuthUser> {
   return response.json();
 }
 
+export async function fetchAccessModel(): Promise<AccessModel> {
+  const response = await apiFetchResilient("/auth/access-model", { cache: "no-store", headers: authHeaders() });
+  if (!response.ok) throw await parseApiError(response, "Falha ao carregar modelo de permissões.");
+  return response.json();
+}
+
 export async function fetchOAuthProviders(): Promise<OAuthProviderStatus[]> {
   const response = await apiFetchResilient("/auth/providers", { cache: "no-store" });
   if (!response.ok) throw await parseApiError(response, "Falha ao carregar provedores de login.");
@@ -653,7 +714,7 @@ export async function fetchOAuthProviders(): Promise<OAuthProviderStatus[]> {
 }
 
 export async function fetchSocialLoginProviders(): Promise<SocialLoginProviderConfig[]> {
-  const response = await apiFetch("/auth/social-config", { cache: "no-store", headers: authHeaders() });
+  const response = await apiFetchResilient("/auth/social-config", { cache: "no-store", headers: authHeaders() });
   if (!response.ok) throw await parseApiError(response, "Falha ao carregar configuração de login social.");
   const payload = await response.json();
   return payload.providers;
@@ -668,7 +729,7 @@ export async function updateSocialLoginProvider(
     login_button_enabled?: boolean;
   },
 ): Promise<SocialLoginProviderConfig> {
-  const response = await apiFetch(`/auth/social-config/${provider}`, {
+  const response = await apiFetchResilient(`/auth/social-config/${provider}`, {
     method: "PUT",
     headers: {
       ...authHeaders(),
@@ -680,22 +741,63 @@ export async function updateSocialLoginProvider(
   return response.json();
 }
 
+export async function fetchUsers(): Promise<UserRecord[]> {
+  const response = await apiFetchResilient("/users", { cache: "no-store", headers: authHeaders() });
+  if (!response.ok) throw await parseApiError(response, "Falha ao carregar usuários.");
+  const payload = await response.json();
+  return payload.items;
+}
+
+export async function createUser(payload: UserCreatePayload): Promise<UserRecord> {
+  const response = await apiFetchResilient("/users", {
+    method: "POST",
+    headers: {
+      ...authHeaders(),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw await parseApiError(response, "Falha ao criar usuário.");
+  return response.json();
+}
+
+export async function updateUser(provider: string, username: string, payload: UserUpdatePayload): Promise<UserRecord> {
+  const response = await apiFetchResilient(`/users/${provider}/${encodeURIComponent(username)}`, {
+    method: "PUT",
+    headers: {
+      ...authHeaders(),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw await parseApiError(response, "Falha ao atualizar usuário.");
+  return response.json();
+}
+
+export async function deleteUser(provider: string, username: string): Promise<void> {
+  const response = await apiFetchResilient(`/users/${provider}/${encodeURIComponent(username)}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  if (!response.ok) throw await parseApiError(response, "Falha ao excluir usuário.");
+}
+
 export async function fetchStoreConnectors(): Promise<MarketplaceConnector[]> {
-  const response = await apiFetch("/stores/connectors", { cache: "no-store", headers: authHeaders() });
+  const response = await apiFetchResilient("/stores/connectors", { cache: "no-store", headers: authHeaders() });
   if (!response.ok) throw await parseApiError(response, "Falha ao carregar conectores de loja.");
   const payload = await response.json();
   return payload.items;
 }
 
 export async function fetchStores(): Promise<StoreIntegration[]> {
-  const response = await apiFetch("/stores", { cache: "no-store", headers: authHeaders() });
+  const response = await apiFetchResilient("/stores", { cache: "no-store", headers: authHeaders() });
   if (!response.ok) throw await parseApiError(response, "Falha ao carregar lojas.");
   const payload = await response.json();
   return payload.items;
 }
 
 export async function createStore(payload: StorePayload): Promise<StoreIntegration> {
-  const response = await apiFetch("/stores", {
+  const response = await apiFetchResilient("/stores", {
     method: "POST",
     headers: {
       ...authHeaders(),
@@ -708,7 +810,7 @@ export async function createStore(payload: StorePayload): Promise<StoreIntegrati
 }
 
 export async function deleteStore(id: string): Promise<void> {
-  const response = await apiFetch(`/stores/${id}`, {
+  const response = await apiFetchResilient(`/stores/${id}`, {
     method: "DELETE",
     headers: authHeaders(),
   });
@@ -716,7 +818,7 @@ export async function deleteStore(id: string): Promise<void> {
 }
 
 export async function startMercadoLivreOAuth(storeId: string): Promise<StoreOAuthAuthorization> {
-  const response = await apiFetch(`/stores/${storeId}/oauth/mercado-livre/start`, {
+  const response = await apiFetchResilient(`/stores/${storeId}/oauth/mercado-livre/start`, {
     method: "POST",
     headers: {
       ...authHeaders(),
@@ -728,7 +830,7 @@ export async function startMercadoLivreOAuth(storeId: string): Promise<StoreOAut
 }
 
 export async function buildPublicationDraft(storeId: string, projectId: string): Promise<ProductPublishDraft> {
-  const response = await apiFetch(`/stores/${storeId}/publish/${projectId}`, {
+  const response = await apiFetchResilient(`/stores/${storeId}/publish/${projectId}`, {
     method: "POST",
     headers: {
       ...authHeaders(),
