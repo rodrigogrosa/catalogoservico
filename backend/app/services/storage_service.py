@@ -5,6 +5,7 @@ import json
 import logging
 from pathlib import Path
 import re
+import shutil
 from typing import Any
 
 from fastapi import UploadFile
