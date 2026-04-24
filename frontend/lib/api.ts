@@ -357,7 +357,7 @@ function apiBase(): string {
       ?? `${backendOrigin()}/api/v1`;
   }
 
-  return `${backendOrigin()}/api/v1`;
+  return "/api/v1";
 }
 
 export type OAuthProviderStatus = {
@@ -505,6 +505,7 @@ async function parseApiError(response: Response, fallback: string): Promise<Erro
 export function fileUrl(url?: string | null): string | undefined {
   if (!url) return undefined;
   if (url.startsWith("http")) return url;
+  if (typeof window !== "undefined") return url;
   return `${backendOrigin()}${url}`;
 }
 
