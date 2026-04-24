@@ -3,6 +3,7 @@ import sys
 
 import pytest
 from fastapi.testclient import TestClient
+import httpx
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
@@ -15,9 +16,12 @@ client = TestClient(app)
 
 @pytest.fixture(autouse=True)
 def clean_social_login_config() -> None:
+    get_settings.cache_clear()
     settings = get_settings()
     path = settings.storage_root / "_system" / "social_login.json"
     path.unlink(missing_ok=True)
+    yield
+    get_settings.cache_clear()
 
 
 def test_master_login_returns_bearer_token() -> None:
@@ -114,7 +118,59 @@ def test_social_login_configuration_can_enable_google_provider() -> None:
     assert "accounts.google.com" in google["auth_url"]
 
 
-def test_social_oauth_callback_returns_placeholder_page() -> None:
-    response = client.get("/api/v1/auth/oauth/google/callback?code=abc123&state=snapmaker3d-studio")
-    assert response.status_code == 200
-    assert "Código recebido" in response.text
+def test_social_oauth_callback_redirects_after_google_exchange(monkeypatch: pytest.MonkeyPatch) -> None:
+    login = client.post(
+        "/api/v1/auth/login",
+        json={"username": "rodrigogrosa", "password": "Violao2021@"},
+    )
+    token = login.json()["access_token"]
+    client.put(
+        "/api/v1/auth/social-config/google",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "credentials": {
+                "client_id": "google-client-id.apps.googleusercontent.com",
+                "client_secret": "google-secret",
+            },
+            "redirect_uri": "https://api.euachei3d.com.br/api/v1/auth/oauth/google/callback",
+            "scopes": ["openid", "email", "profile"],
+            "login_button_enabled": True,
+        },
+    )
+
+    class FakeResponse:
+        def __init__(self, payload: dict[str, str], status_code: int = 200) -> None:
+            self._payload = payload
+            self.status_code = status_code
+            self.text = str(payload)
+
+        def json(self) -> dict[str, str]:
+            return self._payload
+
+    def fake_post(*args, **kwargs):
+        return FakeResponse({"access_token": "google-access-token"})
+
+    def fake_get(*args, **kwargs):
+        return FakeResponse(
+            {
+                "sub": "google-user-123",
+                "email": "social@example.com",
+                "name": "Usuário Google",
+            }
+        )
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    response = client.get(
+        "/api/v1/auth/oauth/google/callback?code=abc123&state=snapmaker3d-studio",
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert "/login/social-complete#session=" in response.headers["location"]
+
+
+def test_social_oauth_callback_rejects_invalid_state() -> None:
+    response = client.get("/api/v1/auth/oauth/google/callback?code=abc123&state=wrong-state")
+    assert response.status_code == 400
+    assert "State inválido" in response.text

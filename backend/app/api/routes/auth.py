@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app.core.auth import require_current_user
 from app.schemas.auth import (
@@ -63,54 +63,69 @@ async def update_social_config(
 
 
 @router.api_route("/oauth/{provider}/callback", methods=["GET", "POST"], response_class=HTMLResponse)
-async def social_oauth_callback(provider: str, code: str | None = None, state: str | None = None, error: str | None = None) -> HTMLResponse:
-    title = f"Callback {provider.title()}"
-    if error:
-        message = f"O provedor retornou erro: {error}."
-        status_label = "Falha"
-    elif code:
-        message = (
-            "O authorization code foi recebido com sucesso. "
-            "Esta base já está pronta para armazenar a configuração do provedor, "
-            "mas a troca final do code por token e a criação automática da sessão social "
-            "ainda dependem da integração server-side específica deste provedor."
-        )
-        status_label = "Código recebido"
-    else:
-        message = "O provedor redirecionou para este callback sem code nem erro."
-        status_label = "Callback incompleto"
+async def social_oauth_callback(
+    provider: str,
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    service: AuthService = Depends(get_auth_service),
+):
+    expected_state = "snapmaker3d-studio"
 
-    html = f"""
-    <!doctype html>
-    <html lang="pt-BR">
-      <head>
-        <meta charset="utf-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>{title}</title>
-        <style>
-          body {{ font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, sans-serif; background: #f6efe3; color: #0f172a; margin: 0; }}
-          main {{ max-width: 760px; margin: 7vh auto; padding: 32px; background: white; border-radius: 28px; box-shadow: 0 12px 40px rgba(15, 23, 42, 0.08); }}
-          .kicker {{ text-transform: uppercase; letter-spacing: 0.24em; font-size: 12px; color: #b45309; font-weight: 700; }}
-          h1 {{ font-size: 40px; margin: 12px 0 8px; }}
-          .status {{ display: inline-block; margin-top: 12px; padding: 8px 14px; border-radius: 999px; background: #fff7ed; color: #9a3412; font-weight: 600; }}
-          p, li {{ font-size: 18px; line-height: 1.7; color: #475569; }}
-          code {{ background: #f8fafc; padding: 2px 6px; border-radius: 8px; }}
-        </style>
-      </head>
-      <body>
-        <main>
-          <p class="kicker">Login social</p>
-          <h1>{title}</h1>
-          <span class="status">{status_label}</span>
-          <p>{message}</p>
-          <ul>
-            <li><strong>Provider:</strong> <code>{provider}</code></li>
-            <li><strong>Code:</strong> <code>{code or "não informado"}</code></li>
-            <li><strong>State:</strong> <code>{state or "não informado"}</code></li>
-          </ul>
-          <p>Volte ao SnapMaker3d Studio para continuar a configuração do provedor.</p>
-        </main>
-      </body>
-    </html>
-    """
-    return HTMLResponse(html, status_code=200 if code and not error else 400)
+    if error:
+        html = service.callback_error_html(
+            provider,
+            "Falha",
+            f"O provedor retornou erro: {error}.",
+            code=code,
+            state=state,
+            status_code=400,
+        )
+        return HTMLResponse(html, status_code=400)
+
+    if state and state != expected_state:
+        html = service.callback_error_html(
+            provider,
+            "State inválido",
+            "O state retornado pelo provedor não corresponde ao valor esperado pelo sistema.",
+            code=code,
+            state=state,
+            status_code=400,
+        )
+        return HTMLResponse(html, status_code=400)
+
+    if provider == "google" and code:
+        try:
+            session = service.exchange_google_code(code)
+        except ValueError as exc:
+            html = service.callback_error_html(
+                provider,
+                "Falha na troca do código",
+                str(exc),
+                code=code,
+                state=state,
+                status_code=400,
+            )
+            return HTMLResponse(html, status_code=400)
+        return RedirectResponse(service.build_social_completion_url(session), status_code=303)
+
+    if code:
+        html = service.callback_error_html(
+            provider,
+            "Integração pendente",
+            "O authorization code foi recebido, mas este provedor ainda não teve a troca server-side final implementada nesta base.",
+            code=code,
+            state=state,
+            status_code=200,
+        )
+        return HTMLResponse(html, status_code=200)
+
+    html = service.callback_error_html(
+        provider,
+        "Callback incompleto",
+        "O provedor redirecionou para este callback sem code nem erro.",
+        code=code,
+        state=state,
+        status_code=400,
+    )
+    return HTMLResponse(html, status_code=400)

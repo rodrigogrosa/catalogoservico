@@ -4,10 +4,11 @@ import base64
 from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
+import httpx
 import json
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import urlencode, quote
 
 from app.core.config import get_settings
 from app.schemas.auth import (
@@ -42,6 +43,29 @@ class AuthService:
             display_name="Rodrigo Rosa",
             role="master",
             provider="master",
+        )
+        return LoginResponse(
+            access_token=self.create_token(user, expires_at),
+            expires_at=expires_at.isoformat(),
+            user=user,
+        )
+
+    def authenticate_social_user(
+        self,
+        *,
+        provider: str,
+        subject: str,
+        email: str | None,
+        display_name: str | None,
+    ) -> LoginResponse:
+        expires_at = datetime.now(tz=timezone.utc) + timedelta(hours=self.settings.auth_token_ttl_hours)
+        username = (email or f"{provider}:{subject}").strip()
+        label = (display_name or email or subject).strip()
+        user = AuthUser(
+            username=username,
+            display_name=label,
+            role="user",
+            provider=provider,
         )
         return LoginResponse(
             access_token=self.create_token(user, expires_at),
@@ -230,6 +254,122 @@ class AuthService:
 
     def recommended_redirect_uri(self, provider: str) -> str:
         return f"{self.settings.public_backend_origin.rstrip('/')}/api/v1/auth/oauth/{provider}/callback"
+
+    def frontend_origin(self) -> str:
+        configured = self.settings.public_frontend_origin.rstrip("/")
+        backend = self.settings.public_backend_origin.rstrip("/")
+
+        if configured and not (
+            configured.startswith("http://127.0.0.1")
+            or configured.startswith("http://localhost")
+        ):
+            return configured
+
+        if "://api." in backend:
+            return backend.replace("://api.", "://app.", 1)
+        if "http--backend--" in backend:
+            return backend.replace("http--backend--", "http--frontend--", 1)
+        return configured or backend
+
+    def build_social_completion_url(self, session: LoginResponse) -> str:
+        payload = self.base64url_encode(session.model_dump_json().encode("utf-8"))
+        return f"{self.frontend_origin()}/login/social-complete#session={quote(payload)}"
+
+    def callback_error_html(self, provider: str, status_label: str, message: str, *, code: str | None, state: str | None, status_code: int) -> str:
+        title = f"Callback {provider.title()}"
+        return f"""
+        <!doctype html>
+        <html lang="pt-BR">
+          <head>
+            <meta charset="utf-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1" />
+            <title>{title}</title>
+            <style>
+              body {{ font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, sans-serif; background: #f6efe3; color: #0f172a; margin: 0; }}
+              main {{ max-width: 760px; margin: 7vh auto; padding: 32px; background: white; border-radius: 28px; box-shadow: 0 12px 40px rgba(15, 23, 42, 0.08); }}
+              .kicker {{ text-transform: uppercase; letter-spacing: 0.24em; font-size: 12px; color: #b45309; font-weight: 700; }}
+              h1 {{ font-size: 40px; margin: 12px 0 8px; }}
+              .status {{ display: inline-block; margin-top: 12px; padding: 8px 14px; border-radius: 999px; background: #fff7ed; color: #9a3412; font-weight: 600; }}
+              p, li {{ font-size: 18px; line-height: 1.7; color: #475569; }}
+              code {{ background: #f8fafc; padding: 2px 6px; border-radius: 8px; }}
+              a {{ color: #9a3412; font-weight: 700; }}
+            </style>
+          </head>
+          <body>
+            <main>
+              <p class="kicker">Login social</p>
+              <h1>{title}</h1>
+              <span class="status">{status_label}</span>
+              <p>{message}</p>
+              <ul>
+                <li><strong>Provider:</strong> <code>{provider}</code></li>
+                <li><strong>Code:</strong> <code>{code or "não informado"}</code></li>
+                <li><strong>State:</strong> <code>{state or "não informado"}</code></li>
+              </ul>
+              <p><a href="{self.frontend_origin()}">Voltar ao SnapMaker3d Studio</a></p>
+            </main>
+          </body>
+        </html>
+        """
+
+    def exchange_google_code(self, code: str) -> LoginResponse:
+        records = self.load_provider_records().get("google", {})
+        credentials = {
+            **self.env_credentials_for_provider("google"),
+            **records.get("credentials", {}),
+        }
+        settings = records.get("settings", {})
+        client_id = str(credentials.get("client_id") or "").strip()
+        client_secret = str(credentials.get("client_secret") or "").strip()
+        redirect_uri = str(settings.get("redirect_uri") or self.recommended_redirect_uri("google")).strip()
+
+        if not client_id or not client_secret:
+            raise ValueError("Google ainda não está configurado com Client ID e Client Secret.")
+
+        token_response = httpx.post(
+            "https://oauth2.googleapis.com/token",
+            data={
+                "code": code,
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "redirect_uri": redirect_uri,
+                "grant_type": "authorization_code",
+            },
+            headers={"Accept": "application/json"},
+            timeout=20.0,
+        )
+        if token_response.status_code >= 400:
+            detail = token_response.text.strip() or "Falha ao trocar code por token."
+            raise ValueError(f"Google recusou a troca do authorization code. {detail}")
+
+        token_payload = token_response.json()
+        access_token = str(token_payload.get("access_token") or "").strip()
+        if not access_token:
+            raise ValueError("Google respondeu sem access_token.")
+
+        profile_response = httpx.get(
+            "https://openidconnect.googleapis.com/v1/userinfo",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Accept": "application/json",
+            },
+            timeout=20.0,
+        )
+        if profile_response.status_code >= 400:
+            detail = profile_response.text.strip() or "Falha ao consultar perfil do Google."
+            raise ValueError(f"Google retornou erro ao buscar o perfil do usuário. {detail}")
+
+        profile = profile_response.json()
+        subject = str(profile.get("sub") or "").strip()
+        if not subject:
+            raise ValueError("Google respondeu sem identificador do usuário.")
+
+        return self.authenticate_social_user(
+            provider="google",
+            subject=subject,
+            email=str(profile.get("email") or "").strip() or None,
+            display_name=str(profile.get("name") or "").strip() or None,
+        )
 
     def provider_definitions(self) -> list[dict[str, Any]]:
         return [

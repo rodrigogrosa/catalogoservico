@@ -52,6 +52,7 @@ class Settings(BaseModel):
     instagram_oauth_client_id: str = Field(default_factory=lambda: os.getenv("INSTAGRAM_OAUTH_CLIENT_ID", ""))
     instagram_oauth_redirect_uri: str = Field(default_factory=lambda: os.getenv("INSTAGRAM_OAUTH_REDIRECT_URI", ""))
     public_backend_origin: str = Field(default_factory=lambda: os.getenv("PUBLIC_BACKEND_ORIGIN", "http://127.0.0.1:8010"))
+    public_frontend_origin: str = Field(default_factory=lambda: os.getenv("PUBLIC_FRONTEND_ORIGIN", "http://127.0.0.1:3000"))
 
 
 @lru_cache
