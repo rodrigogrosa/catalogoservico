@@ -4,6 +4,7 @@ import asyncio
 from datetime import datetime, timezone
 import logging
 from pathlib import Path
+import re
 from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urlparse
 from urllib.request import Request, urlopen
@@ -42,6 +43,7 @@ from app.services.storage_service import StorageService
 logger = logging.getLogger(__name__)
 
 DIRECT_PROJECT_SUFFIXES = {".3mf", ".stl", ".obj", ".step", ".stp", ".amf", ".zip"}
+SMALL_WORDS = {"da", "de", "do", "das", "dos", "e", "em", "para", "com", "of", "and", "the", "to", "from", "a"}
 
 
 class ProjectService:
@@ -75,7 +77,7 @@ class ProjectService:
             raise ValueError("Nenhum arquivo enviado.")
         if len(uploads) > self.settings.max_project_files:
             raise ValueError(f"O projeto excede o limite de {self.settings.max_project_files} arquivos por upload.")
-        project_name = requested_name or Path((uploads[0].filename if uploads else "projeto-3d")).stem
+        project_name = requested_name or self.make_friendly_project_name(uploads[0].filename if uploads else "projeto-3d")
         logger.info(
             "project_create_started",
             extra={
@@ -114,7 +116,7 @@ class ProjectService:
         if self.is_makerworld_model_page(parsed):
             raise ValueError(self.makerworld_page_error())
 
-        project_name = requested_name or Path(unquote(parsed.path)).stem or "projeto-bambu-link"
+        project_name = requested_name or self.make_friendly_project_name(unquote(parsed.path), source_url=url)
         layout = self.storage.create_project_layout(project_name)
         logger.info(
             "project_import_from_url_started",
@@ -274,6 +276,68 @@ class ProjectService:
             },
         )
         return ProjectDetailResponse(**manifest)
+
+    def make_friendly_project_name(self, source_name: str, source_url: str | None = None) -> str:
+        raw = Path(source_name or "projeto-3d").stem
+        if source_url:
+            parsed = urlparse(source_url)
+            if parsed.path:
+                raw = Path(unquote(parsed.path)).stem or raw
+
+        candidate = unquote(raw)
+        candidate = candidate.replace("+", " ")
+        candidate = re.sub(r"\.(stl|3mf|obj|step|stp|amf|zip)$", "", candidate, flags=re.IGNORECASE)
+        candidate = re.sub(r"[_\-]+", " ", candidate)
+        candidate = re.sub(r"\((\d+)\)$", "", candidate).strip()
+        candidate = re.sub(
+            r"\b(snapmaker compatible|snapmaker|bambu project file|for bambu printers|profile|project|file di stampa|fixed profile|compatible|processado|plated)\b",
+            " ",
+            candidate,
+            flags=re.IGNORECASE,
+        )
+        candidate = re.sub(r"\b(v|ver|version)\s*\d+([._-]\d+)*\b", " ", candidate, flags=re.IGNORECASE)
+        candidate = re.sub(r"\b\d+%\s*scale\b", " ", candidate, flags=re.IGNORECASE)
+        candidate = re.sub(r"\bpart\s*\d+\b", " ", candidate, flags=re.IGNORECASE)
+        candidate = re.sub(r"\b(1 color|single color)\b", " Monocromático ", candidate, flags=re.IGNORECASE)
+        candidate = re.sub(r"\bams\b", " Multicor ", candidate, flags=re.IGNORECASE)
+        candidate = re.sub(r"\bmulticolor\b", " Multicor ", candidate, flags=re.IGNORECASE)
+        candidate = re.sub(r"\bmultipart(es)?\b", " Multipartes ", candidate, flags=re.IGNORECASE)
+        candidate = re.sub(r"\bfinal\b", " ", candidate, flags=re.IGNORECASE)
+        candidate = re.sub(r"\s+", " ", candidate).strip(" -_")
+        if not candidate:
+            return "Projeto 3D"
+
+        words: list[str] = []
+        for index, word in enumerate(candidate.split()):
+            lowered = word.lower()
+            if lowered.isdigit():
+                words.append(word)
+                continue
+            if index > 0 and lowered in SMALL_WORDS:
+                words.append(lowered)
+                continue
+            if lowered in {"ui", "rc2", "cf", "gf", "ams", "u1", "3d", "rc"}:
+                words.append(lowered.upper())
+                continue
+            words.append(lowered.capitalize())
+
+        title = " ".join(words)
+        replacements = {
+            " Keychain": " Chaveiro",
+            " Stand": " Suporte",
+            " Holder": " Suporte",
+            " Mount": " Suporte",
+            " Cookie Cutter": " Cortador",
+            " Fidget": " Antiestresse",
+            " Flexi": " Flex",
+            " From A To Z": " de A a Z",
+            " Toy": "",
+        }
+        for source, target in replacements.items():
+            title = title.replace(source, target)
+        title = re.sub(r"\bfrom a to z\b", "de A a Z", title, flags=re.IGNORECASE)
+        title = re.sub(r"\s+", " ", title).strip(" -_")
+        return title[:96].strip() or "Projeto 3D"
 
     def download_project_url(self, url: str, target_dir: Path, project_name: str) -> Path:
         logger.info("project_download_started", extra={"project_name": project_name, "url": url})
