@@ -35,26 +35,25 @@ export function AppShell({ children, active = "Visão geral", title = "Portal Eu
   return (
     <main className="min-h-screen">
       <div className="flex min-h-screen w-full">
-        <aside className="shell-sidebar hidden w-[320px] shrink-0 border-r border-white/10 text-white xl:block">
-          <div className="sticky top-0 flex h-screen flex-col px-7 py-7">
+        <aside className="shell-sidebar hidden w-[298px] shrink-0 border-r border-white/10 text-white xl:block">
+          <div className="sticky top-0 flex h-screen flex-col px-5 py-5">
             <BrandMark />
 
-            <div className="mt-8 rounded-[1.65rem] border border-white/10 bg-white/5 px-5 py-5">
-              <p className="brand-kicker">Posicionamento</p>
-              <p className="mt-3 text-lg font-semibold text-white">Portal comercial e operacional para impressão 3D.</p>
-              <p className="mt-2 text-sm leading-7 text-slate-300">
-                Entrada, conversão, vitrine, publicação e rastreabilidade num único fluxo.
+            <div className="mt-5 rounded-[1.2rem] border border-white/10 bg-white/5 px-4 py-3">
+              <p className="brand-kicker">Portal</p>
+              <p className="mt-2 text-sm font-semibold leading-6 text-white">
+                Operação, catálogo e vendas em um único fluxo.
               </p>
             </div>
 
-            <nav className="mt-7 space-y-2">
+            <nav className="mt-5 grid content-start gap-1.5">
               {navItems.map((item) => {
                 const selected = item.label === active;
                 return (
                   <Link key={item.label} href={item.href} className={`nav-link ${selected ? "nav-link-active" : ""}`}>
                     <span>
                       <span className="block">{item.label}</span>
-                      <span className="mt-1 block text-[0.74rem] font-medium tracking-[0.12em] text-slate-400">{item.helper}</span>
+                      <span className="mt-0.5 block text-[0.68rem] font-medium tracking-[0.12em] text-slate-400">{item.helper}</span>
                     </span>
                     <span className="text-xs text-slate-500">●</span>
                   </Link>
@@ -62,20 +61,21 @@ export function AppShell({ children, active = "Visão geral", title = "Portal Eu
               })}
             </nav>
 
-            <div className="mt-auto space-y-4">
-              <div className="rounded-[1.5rem] border border-white/10 bg-white/5 px-5 py-5">
-                <p className="brand-kicker">Operação local</p>
-                <p className="mt-3 text-sm font-semibold text-white">Pasta principal</p>
-                <p className="mt-2 break-words font-mono text-xs leading-6 text-slate-300">~/Downloads/Projetos3d/SnapMaker3d</p>
-              </div>
-              <div className="rounded-[1.5rem] border border-white/10 bg-white/5 px-5 py-5">
-                <p className="brand-kicker">Sessão</p>
-                <p className="mt-3 truncate text-base font-semibold text-white">{user?.display_name ?? "Usuário"}</p>
-                <p className="text-sm text-slate-400">{user?.role === "master" ? "Administrador master" : "Acesso autenticado"}</p>
+            <div className="mt-auto rounded-[1.25rem] border border-white/10 bg-white/5 px-4 py-4">
+              <div className="grid gap-3">
+                <div>
+                  <p className="brand-kicker">Sessão</p>
+                  <p className="mt-2 truncate text-sm font-semibold text-white">{user?.display_name ?? "Usuário"}</p>
+                  <p className="text-xs text-slate-400">{user?.role === "master" ? "Administrador master" : "Acesso autenticado"}</p>
+                </div>
+                <div>
+                  <p className="brand-kicker">Pasta</p>
+                  <p className="mt-2 break-words font-mono text-[0.68rem] leading-5 text-slate-300">~/Downloads/Projetos3d/SnapMaker3d</p>
+                </div>
                 <button
                   type="button"
                   onClick={logout}
-                  className="mt-4 w-full rounded-full bg-white px-4 py-3 text-sm font-semibold text-slate-950 transition hover:bg-orange-100"
+                  className="w-full rounded-full bg-white px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-orange-100"
                 >
                   Encerrar sessão
                 </button>

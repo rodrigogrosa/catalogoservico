@@ -193,7 +193,7 @@ button {
 }
 
 .nav-link {
-  @apply flex items-center justify-between rounded-[1.1rem] px-4 py-3 text-[0.98rem] font-semibold transition;
+  @apply flex items-center justify-between rounded-[1rem] px-3.5 py-2.5 text-[0.93rem] font-semibold leading-5 transition;
   color: rgba(244, 247, 250, 0.74);
 }
 
