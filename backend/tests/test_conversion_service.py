@@ -2,7 +2,7 @@ from pathlib import Path
 import json
 import sys
 from xml.etree import ElementTree as ET
-from zipfile import ZIP_DEFLATED, ZipFile
+from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
@@ -103,6 +103,32 @@ def test_generates_incremental_export_names(tmp_path: Path) -> None:
     assert Path(first["output_file"]).name == "input_snapmaker_compatible_final.3mf"
     assert Path(second["output_file"]).name == "input_snapmaker_compatible_01.3mf"
     assert Path(third["output_file"]).name == "input_snapmaker_compatible_02.3mf"
+
+
+def test_stream_preserves_large_plate_based_archive_without_loading_all_entries(tmp_path: Path) -> None:
+    source = tmp_path / "large_plate.3mf"
+    destination_dir = tmp_path / "out"
+    destination_dir.mkdir()
+
+    model_settings = """<config><plate><model_instance id=\"1\"/></plate></config>"""
+    with ZipFile(source, "w", compression=ZIP_DEFLATED) as archive:
+        archive.writestr("Metadata/model_settings.config", model_settings)
+        archive.writestr("Metadata/project_settings.config", json.dumps({"printer_model": "Bambu Lab P1S"}))
+        archive.writestr("3D/3dmodel.model", "<model />")
+
+    with ZipFile(source, "a", compression=ZIP_STORED) as archive:
+        archive.writestr("3D/Objects/object_4.model", b"0" * (21 * 1024 * 1024))
+
+    service = ConversionService()
+    result = service.convert_to_snapmaker(source, destination_dir)
+
+    assert Path(result["output_file"]).exists()
+    assert any("streaming" in item.lower() or "plates" in item.lower() for item in result["adapted"])
+
+    with ZipFile(result["output_file"], "r") as archive:
+        assert "3D/Objects/object_4.model" in archive.namelist()
+        settings = json.loads(archive.read("Metadata/project_settings.config").decode("utf-8"))
+        assert settings["printer_model"] == "Snapmaker U1 0.4 nozzle"
 
 
 def test_enables_supports_when_support_plan_requires_it(tmp_path: Path) -> None:

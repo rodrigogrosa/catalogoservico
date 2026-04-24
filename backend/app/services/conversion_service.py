@@ -106,6 +106,28 @@ M84
         lost = ["equivalencias exatas de slicing/profiles proprietarios nao garantidas nesta versao base"]
 
         if zipfile.is_zipfile(source_file):
+            if source_file.stat().st_size >= 20 * 1024 * 1024 and self._archive_has_plate_metadata_file(source_file):
+                sanitized = self._stream_copy_large_plate_archive(
+                    source_file,
+                    destination,
+                    support_plan=support_plan,
+                    adhesion_plan=adhesion_plan,
+                )
+                adapted.extend(sanitized["adapted"])
+                lost.extend(sanitized["lost"])
+                extra_output_files = sanitized.get("extra_output_files", [])
+                parameter_equivalence = sanitized.get("parameter_equivalence", [])
+                return {
+                    "status": "partial",
+                    "output_file": str(destination),
+                    "extra_output_files": extra_output_files,
+                    "preserved": preserved,
+                    "adapted": adapted,
+                    "lost": lost,
+                    "support_plan": support_plan or {"enabled": False, "reason": "not_provided"},
+                    "adhesion_plan": adhesion_plan or {"mode": "skirt", "reason": "not_provided"},
+                    "parameter_equivalence": parameter_equivalence,
+                }
             sanitized = self._sanitize_project_archive(
                 source_file,
                 destination,
@@ -133,6 +155,77 @@ M84
             "adhesion_plan": adhesion_plan or {"mode": "skirt", "reason": "not_provided"},
             "parameter_equivalence": parameter_equivalence,
         }
+
+    def _archive_has_plate_metadata_file(self, source_file: Path) -> bool:
+        try:
+            with zipfile.ZipFile(source_file, "r") as source_zip:
+                info = source_zip.getinfo("Metadata/model_settings.config")
+                if info.file_size > 2 * 1024 * 1024:
+                    return False
+                root = ET.fromstring(source_zip.read(info.filename))
+                return any(plate.findall("model_instance") for plate in root.findall("plate"))
+        except Exception:
+            return False
+
+    def _stream_copy_large_plate_archive(
+        self,
+        source_file: Path,
+        destination: Path,
+        *,
+        support_plan: dict[str, Any] | None = None,
+        adhesion_plan: dict[str, Any] | None = None,
+    ) -> dict[str, list[str] | list[dict[str, Any]]]:
+        adapted: list[str] = []
+        lost: list[str] = []
+        parameter_equivalence: list[dict[str, Any]] = []
+
+        with zipfile.ZipFile(source_file, "r") as source_zip, zipfile.ZipFile(destination, "w") as destination_zip:
+            for info in source_zip.infolist():
+                if info.filename == "Metadata/project_settings.config":
+                    try:
+                        settings = json.loads(source_zip.read(info.filename).decode("utf-8"))
+                        settings, applied, equivalence = self._sanitize_project_settings(
+                            settings,
+                            support_plan=support_plan,
+                            adhesion_plan=adhesion_plan,
+                        )
+                        adapted.extend(applied)
+                        parameter_equivalence.extend(equivalence)
+                        destination_zip.writestr(info.filename, json.dumps(settings, indent=4, ensure_ascii=False).encode("utf-8"))
+                    except Exception:
+                        lost.append(
+                            "sanitizacao automatica de project_settings.config falhou; configuracao original foi preservada"
+                        )
+                        self._copy_zip_entry_streaming(source_zip, destination_zip, info)
+                    continue
+
+                self._copy_zip_entry_streaming(source_zip, destination_zip, info)
+
+        adapted.append(
+            "Pacote 3MF grande com plates foi preservado em streaming para evitar travamento por memória no ambiente publicado."
+        )
+        return {
+            "adapted": adapted,
+            "lost": lost,
+            "extra_output_files": [],
+            "parameter_equivalence": parameter_equivalence,
+        }
+
+    def _copy_zip_entry_streaming(
+        self,
+        source_zip: zipfile.ZipFile,
+        destination_zip: zipfile.ZipFile,
+        info: zipfile.ZipInfo,
+    ) -> None:
+        target_info = zipfile.ZipInfo(info.filename, date_time=info.date_time)
+        target_info.compress_type = info.compress_type
+        target_info.comment = info.comment
+        target_info.extra = info.extra
+        target_info.create_system = info.create_system
+        target_info.external_attr = info.external_attr
+        target_info.flag_bits = info.flag_bits
+        with source_zip.open(info.filename, "r") as source_handle, destination_zip.open(target_info, "w", force_zip64=True) as target_handle:
+            shutil.copyfileobj(source_handle, target_handle, length=1024 * 1024)
 
     def _sanitize_project_archive(
         self,
