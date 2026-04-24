@@ -515,31 +515,55 @@ async function apiFetch(path: string, init?: RequestInit, options?: ApiFetchOpti
 }
 
 async function apiFetchResilient(path: string, init?: RequestInit, timeoutMs = 20000): Promise<Response> {
-  const primary = await apiFetch(path, init, { timeoutMs });
-  if (!TRANSIENT_UPSTREAM_STATUS.has(primary.status)) {
+  let primary: Response | null = null;
+
+  try {
+    primary = await apiFetch(path, init, { timeoutMs });
+  } catch (error) {
+    if (typeof window !== "undefined") {
+      console.warn("[SnapMaker3d] Proxy request failed before response, retrying request", {
+        path,
+        method: init?.method ?? "GET",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (primary && !TRANSIENT_UPSTREAM_STATUS.has(primary.status)) {
     return primary;
   }
 
   if (typeof window !== "undefined") {
-    console.warn("[SnapMaker3d] Transient upstream response, retrying request", {
+    console.warn("[SnapMaker3d] Proxy response requires retry", {
       path,
       method: init?.method ?? "GET",
-      status: primary.status,
+      status: primary?.status ?? null,
     });
   }
 
   await delay(400);
-  const retry = await apiFetch(path, init, { timeoutMs });
-  if (!TRANSIENT_UPSTREAM_STATUS.has(retry.status)) {
-    return retry;
-  }
 
-  if (typeof window !== "undefined") {
-    console.warn("[SnapMaker3d] Proxy still unstable, retrying against direct backend", {
-      path,
-      method: init?.method ?? "GET",
-      status: retry.status,
-    });
+  try {
+    const retry = await apiFetch(path, init, { timeoutMs });
+    if (!TRANSIENT_UPSTREAM_STATUS.has(retry.status)) {
+      return retry;
+    }
+
+    if (typeof window !== "undefined") {
+      console.warn("[SnapMaker3d] Proxy still unstable, retrying against direct backend", {
+        path,
+        method: init?.method ?? "GET",
+        status: retry.status,
+      });
+    }
+  } catch (error) {
+    if (typeof window !== "undefined") {
+      console.warn("[SnapMaker3d] Proxy retry also failed, retrying against direct backend", {
+        path,
+        method: init?.method ?? "GET",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   return apiFetch(path, init, { timeoutMs, directToBackend: true });
