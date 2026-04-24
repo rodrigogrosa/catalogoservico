@@ -5,7 +5,6 @@ import json
 import logging
 from pathlib import Path
 import re
-import shutil
 from typing import Any
 
 from fastapi import UploadFile
@@ -20,6 +19,7 @@ class StorageService:
     def __init__(self) -> None:
         self.settings = get_settings()
         self.root = self.settings.storage_root
+        self.upload_chunk_size_bytes = 1024 * 1024
 
     def slugify(self, raw_name: str) -> str:
         value = raw_name.strip().lower()
@@ -61,14 +61,32 @@ class StorageService:
             "folders": folders,
         }
 
-    async def save_upload(self, upload: UploadFile, target_dir: Path) -> Path:
+    def save_upload_sync(self, upload: UploadFile, target_dir: Path) -> Path:
         filename = Path(upload.filename or "arquivo-desconhecido").name
         if filename.lower().endswith(".slt"):
             filename = f"{Path(filename).stem}.stl"
         destination = self.unique_upload_path(target_dir / filename)
+        written = 0
+        upload.file.seek(0)
         with destination.open("wb") as buffer:
-            shutil.copyfileobj(upload.file, buffer)
+            while True:
+                chunk = upload.file.read(self.upload_chunk_size_bytes)
+                if not chunk:
+                    break
+                written += len(chunk)
+                buffer.write(chunk)
+        logger.info(
+            "upload_saved_to_disk",
+            extra={
+                "upload_name": filename,
+                "destination": str(destination),
+                "size_bytes": written,
+            },
+        )
         return destination
+
+    async def save_upload(self, upload: UploadFile, target_dir: Path) -> Path:
+        return self.save_upload_sync(upload, target_dir)
 
     def unique_upload_path(self, destination: Path) -> Path:
         if not destination.exists():
@@ -77,11 +95,14 @@ class StorageService:
         suffix = destination.suffix
         return destination.parent / f"{stem}_{datetime.now(tz=timezone.utc).strftime('%Y%m%d%H%M%S')}{suffix}"
 
-    async def save_uploads(self, uploads: list[UploadFile], target_dir: Path) -> list[Path]:
+    def save_uploads_sync(self, uploads: list[UploadFile], target_dir: Path) -> list[Path]:
         saved: list[Path] = []
         for upload in uploads:
-            saved.append(await self.save_upload(upload, target_dir))
+            saved.append(self.save_upload_sync(upload, target_dir))
         return saved
+
+    async def save_uploads(self, uploads: list[UploadFile], target_dir: Path) -> list[Path]:
+        return self.save_uploads_sync(uploads, target_dir)
 
     def write_json(self, path: Path, payload: dict[str, Any]) -> None:
         path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")

@@ -85,7 +85,11 @@ class ProjectService:
             },
         )
         layout = self.storage.create_project_layout(project_name)
-        saved_files = await self.storage.save_uploads(uploads, layout["folders"]["original"])
+        saved_files = await asyncio.to_thread(
+            self.storage.save_uploads_sync,
+            uploads,
+            layout["folders"]["original"],
+        )
         logger.info(
             "project_upload_saved",
             extra={
@@ -95,7 +99,13 @@ class ProjectService:
                 "saved_size_bytes": sum(path.stat().st_size for path in saved_files if path.exists()),
             },
         )
-        return self.create_project_from_saved_files(saved_files, layout, project_name, origin_url=None)
+        return await asyncio.to_thread(
+            self.create_project_from_saved_files,
+            saved_files,
+            layout,
+            project_name,
+            None,
+        )
 
     async def create_project_from_url(self, url: str, requested_name: str | None = None) -> ProjectDetailResponse:
         parsed = urlparse(url.strip())
@@ -110,8 +120,19 @@ class ProjectService:
             "project_import_from_url_started",
             extra={"project_name": project_name, "url": url, "storage_path": str(layout["folders"]["root"])},
         )
-        downloaded_file = self.download_project_url(url, layout["folders"]["original"], project_name)
-        return self.create_project_from_saved_files([downloaded_file], layout, project_name, origin_url=url)
+        downloaded_file = await asyncio.to_thread(
+            self.download_project_url,
+            url,
+            layout["folders"]["original"],
+            project_name,
+        )
+        return await asyncio.to_thread(
+            self.create_project_from_saved_files,
+            [downloaded_file],
+            layout,
+            project_name,
+            url,
+        )
 
     def create_project_from_saved_files(
         self,
