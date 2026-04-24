@@ -139,3 +139,73 @@ def test_compare_and_bundle_generation(tmp_path: Path, monkeypatch) -> None:
     assert (tmp_path / bundle["path"].split("/storage/", 1)[1]).exists()
 
     get_settings.cache_clear()
+
+
+def test_list_projects_skips_broken_manifests(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("SNAPMAKER_STORAGE_ROOT", str(tmp_path))
+    get_settings.cache_clear()
+
+    storage = StorageService()
+    service = ProjectService()
+
+    valid_layout = storage.create_project_layout("healthy-project")
+    broken_layout = storage.create_project_layout("broken-project")
+
+    valid_manifest = {
+        "id": valid_layout["version_name"],
+        "name": "healthy-project",
+        "slug": valid_layout["slug"],
+        "version": valid_layout["version"],
+        "status": "completed",
+        "input_format": "stl",
+        "source_ecosystem": "generic",
+        "created_at": "2026-04-23T00:00:00+00:00",
+        "updated_at": "2026-04-23T00:00:00+00:00",
+        "storage_path": str(valid_layout["folders"]["root"]),
+        "original_filename": "healthy.stl",
+        "size_bytes": 1,
+        "input_files": [],
+        "requested_actions": [],
+        "findings": [],
+        "risks": [],
+        "questions_pending": [],
+        "blocking_questions": [],
+        "metadata": {"request_parameters": {}},
+        "processing_stages": [],
+        "stage_metrics": [],
+        "decisions": [],
+        "artifacts": [],
+        "previews": [],
+        "reports": [],
+        "logs": [],
+        "bundles": [],
+        "preview_url": None,
+        "manifest": None,
+        "snapshot": None,
+        "bambu_parameter_equivalence": [],
+        "printable_score": PrintableScore(score=90, level="low", blockers=[], warnings=[], recommendations=[]).model_dump(),
+        "sales_profile": {
+            "pricing_version": service.sales_service.PRICING_VERSION,
+            "copy_source": "template",
+            "estimated_material_g": 10,
+            "estimated_print_hours": 1,
+            "estimated_base_cost_brl": 5,
+            "suggested_price_50_margin_brl": 7.5,
+            "reseller_price_brl": 6.5,
+            "default_margin_percent": 50,
+            "reseller_margin_percent": 30,
+            "currency": "BRL",
+            "assumptions": [],
+            "sales_tips": [],
+            "marketplace_attributes": [],
+        },
+    }
+
+    storage.save_manifest(valid_manifest)
+    (broken_layout["folders"]["root"] / "project.json").write_text("{not-json", encoding="utf-8")
+
+    projects = service.list_projects()
+
+    assert [project.id for project in projects] == [valid_layout["version_name"]]
+
+    get_settings.cache_clear()

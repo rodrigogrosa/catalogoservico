@@ -395,9 +395,20 @@ class ProjectService:
         manifests = self.storage.list_manifests()
         summaries: list[ProjectSummary] = []
         for manifest in manifests:
-            self.ensure_preview_fields(manifest, persist=True)
-            self.ensure_sales_profile(manifest, persist=True, allow_llm=False)
-            summaries.append(ProjectSummary(**manifest))
+            try:
+                self.ensure_preview_fields(manifest, persist=True)
+                self.ensure_sales_profile(manifest, persist=True, allow_llm=False)
+                summaries.append(ProjectSummary(**manifest))
+            except Exception:
+                logger.exception(
+                    "project_manifest_skipped",
+                    extra={
+                        "project_id": manifest.get("id"),
+                        "storage_path": manifest.get("storage_path"),
+                        "name": manifest.get("name"),
+                    },
+                )
+                continue
         return summaries
 
     def get_project(self, project_id: str) -> ProjectDetailResponse | None:

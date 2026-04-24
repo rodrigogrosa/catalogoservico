@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import logging
 from pathlib import Path
 import re
 import shutil
@@ -10,6 +11,9 @@ from typing import Any
 from fastapi import UploadFile
 
 from app.core.config import get_settings
+
+
+logger = logging.getLogger(__name__)
 
 
 class StorageService:
@@ -134,7 +138,17 @@ class StorageService:
     def list_manifests(self) -> list[dict[str, Any]]:
         manifests: list[dict[str, Any]] = []
         for manifest in self.root.glob("*/*/project.json"):
-            manifests.append(self.normalize_manifest_paths(self.read_json(manifest), manifest.parent))
+            try:
+                manifests.append(self.normalize_manifest_paths(self.read_json(manifest), manifest.parent))
+            except Exception as exc:
+                logger.exception(
+                    "manifest_load_failed",
+                    extra={
+                        "manifest_path": str(manifest),
+                        "project_root": str(manifest.parent),
+                    },
+                )
+                continue
         manifests.sort(key=lambda item: item["updated_at"], reverse=True)
         return manifests
 
