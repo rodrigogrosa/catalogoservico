@@ -4,10 +4,24 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { AppShell } from "@/components/app-shell";
+import { useAuth } from "@/components/auth-provider";
+import { AccessDeniedPanel } from "@/components/permission-gate";
 import { ProjectDetailView } from "@/components/project-detail";
 import { fetchProject, type ProjectDetail } from "@/lib/api";
+import { PERMISSIONS } from "@/lib/permissions";
 
 export function ProjectPageClient({ id }: { id: string }) {
+  return <ProjectPageSectionClient id={id} section="overview" />;
+}
+
+export function ProjectPageSectionClient({
+  id,
+  section,
+}: {
+  id: string;
+  section: "overview" | "process" | "diagnostics" | "files";
+}) {
+  const { can } = useAuth();
   const [project, setProject] = useState<ProjectDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -24,18 +38,26 @@ export function ProjectPageClient({ id }: { id: string }) {
 
   if (loading) {
     return (
-      <AppShell active="Catálogo" title="Carregando projeto" subtitle="Buscando dados técnicos e artefatos.">
+      <AppShell active="Catálogo" title="Carregando projeto" subtitle="Buscando dados do portal do projeto.">
         <section className="panel p-6 text-base text-slate-700">Carregando projeto...</section>
+      </AppShell>
+    );
+  }
+
+  if (!can(PERMISSIONS.projectsView)) {
+    return (
+      <AppShell active="Catálogo" title="Acesso restrito" subtitle="Seu perfil não tem permissão para abrir detalhes técnicos de projeto.">
+        <AccessDeniedPanel description="Seu perfil não possui acesso aos detalhes técnicos do projeto." />
       </AppShell>
     );
   }
 
   if (!project || error) {
     return (
-      <AppShell active="Catálogo" title="Projeto indisponível" subtitle="O backend não retornou os dados deste projeto.">
+      <AppShell active="Catálogo" title="Projeto indisponível" subtitle="O portal não conseguiu recuperar os dados deste projeto.">
         <div className="mx-auto max-w-3xl space-y-6">
-          <Link href="/" className="text-sm text-accentSoft underline">
-            Voltar para a lista de projetos
+          <Link href="/catalog" className="text-sm text-accentSoft underline">
+            Voltar para o catálogo
           </Link>
           <section className="panel p-6 md:p-8">
             <p className="section-kicker">Projeto indisponível</p>
@@ -47,13 +69,32 @@ export function ProjectPageClient({ id }: { id: string }) {
     );
   }
 
+  const sectionMeta = {
+    overview: {
+      title: project.name,
+      subtitle: "Resumo principal do projeto em uma leitura limpa e direta.",
+    },
+    process: {
+      title: `Processar · ${project.name}`,
+      subtitle: "Configuração e disparo de execução em uma página exclusiva.",
+    },
+    diagnostics: {
+      title: `Diagnóstico · ${project.name}`,
+      subtitle: "Achados, riscos, etapas e pendências sem poluição visual.",
+    },
+    files: {
+      title: `Arquivos · ${project.name}`,
+      subtitle: "Entrega, logs, manifesto e bundle final em uma área própria.",
+    },
+  } as const;
+
   return (
-    <AppShell active="Catálogo" title={project.name} subtitle="Detalhes técnicos, galeria, processamento e artefatos do projeto selecionado.">
-      <div className="mx-auto max-w-7xl space-y-6">
-        <Link href="/" className="text-sm text-accentSoft underline">
-          Voltar para a lista de projetos
+    <AppShell active="Catálogo" title={sectionMeta[section].title} subtitle={sectionMeta[section].subtitle}>
+      <div className="mx-auto max-w-5xl space-y-6">
+        <Link href="/catalog" className="text-sm text-accentSoft underline">
+          Voltar para o catálogo
         </Link>
-        <ProjectDetailView project={project} />
+        <ProjectDetailView project={project} section={section} />
       </div>
     </AppShell>
   );
