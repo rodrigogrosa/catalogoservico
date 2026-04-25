@@ -11,6 +11,7 @@ import {
   type AuthSession,
   type AuthUser,
 } from "@/lib/auth-storage";
+import { hasAnyPermission, hasPermission } from "@/lib/permissions";
 
 type AuthContextValue = {
   session: AuthSession | null;
@@ -18,6 +19,8 @@ type AuthContextValue = {
   loading: boolean;
   login: (username: string, password: string) => Promise<void>;
   logout: () => void;
+  can: (permission?: string | null) => boolean;
+  canAny: (permissions: string[]) => boolean;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -73,6 +76,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       loading,
       login,
       logout,
+      can: (permission?: string | null) => hasPermission(session?.user?.permissions, permission),
+      canAny: (permissions: string[]) => hasAnyPermission(session?.user?.permissions, permissions),
     }),
     [session, loading],
   );
