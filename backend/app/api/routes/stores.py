@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 from app.core.auth import require_permission
+from app.core.config import get_settings
 from app.schemas.auth import AuthUser
 from app.schemas.store import (
     ConnectorListResponse,
@@ -98,9 +99,15 @@ async def mercado_livre_oauth_callback(
     service: StoreService = Depends(get_store_service),
 ) -> HTMLResponse:
     if error:
-        return HTMLResponse(build_oauth_callback_html("Autorização recusada", f"Mercado Livre retornou erro: {error}", False), status_code=400)
+        return HTMLResponse(
+            build_oauth_callback_html("Autorização recusada", f"Mercado Livre retornou erro: {error}", False),
+            status_code=400,
+        )
     if not code or not state:
-        return HTMLResponse(build_oauth_callback_html("Callback incompleto", "Mercado Livre não retornou code/state.", False), status_code=400)
+        return HTMLResponse(
+            build_oauth_callback_html("Callback incompleto", "Mercado Livre não retornou code/state.", False),
+            status_code=400,
+        )
     try:
         result = service.complete_mercado_livre_oauth(code, state)
     except ValueError as exc:
@@ -147,6 +154,7 @@ async def build_publication_draft(
 
 def build_oauth_callback_html(title: str, message: str, success: bool) -> str:
     color = "#13795b" if success else "#c54237"
+    frontend_origin = get_settings().public_frontend_origin.rstrip("/")
     return f"""<!doctype html>
 <html lang="pt-BR">
   <head>
@@ -167,7 +175,7 @@ def build_oauth_callback_html(title: str, message: str, success: bool) -> str:
       <section>
         <h1>{title}</h1>
         <p>{message}</p>
-        <a href="http://127.0.0.1:3000/stores">Voltar para Lojas</a>
+        <a href="{frontend_origin}/stores">Voltar para Lojas</a>
       </section>
     </main>
   </body>
