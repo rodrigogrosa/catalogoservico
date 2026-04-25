@@ -1,23 +1,74 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
 
-import { fileUrl, type ArtifactReference, type MarketplaceAttribute, type ProjectDetail } from "@/lib/api";
+import { useAuth } from "@/components/auth-provider";
+import {
+  buildPublicationDraft,
+  fetchStores,
+  fileUrl,
+  type ArtifactReference,
+  type MarketplaceAttribute,
+  type ProductPublishDraft,
+  type ProjectDetail,
+  type StoreIntegration,
+} from "@/lib/api";
+import { PERMISSIONS } from "@/lib/permissions";
 
 type Props = {
   project: ProjectDetail;
 };
 
 export function SalesProductDetail({ project }: Props) {
+  const { can } = useAuth();
   const sales = project.sales_profile;
   const [margin, setMargin] = useState(sales?.default_margin_percent ?? 50);
   const [resellerMargin, setResellerMargin] = useState(sales?.reseller_margin_percent ?? 18);
   const [copied, setCopied] = useState<string | null>(null);
+  const [stores, setStores] = useState<StoreIntegration[]>([]);
+  const [storesLoading, setStoresLoading] = useState(true);
+  const [storesError, setStoresError] = useState<string | null>(null);
+  const [selectedStoreId, setSelectedStoreId] = useState("");
+  const [draft, setDraft] = useState<ProductPublishDraft | null>(null);
+  const [draftLoading, setDraftLoading] = useState(false);
+  const [draftError, setDraftError] = useState<string | null>(null);
   const imageUrl = fileUrl(project.preview_url);
   const hasImagePreview = imageUrl ? /\.(png|jpe?g|webp)(\?.*)?$/i.test(imageUrl) : false;
   const channels = useMemo(() => sales?.marketplace_attributes ?? [], [sales]);
   const adPhotos = useMemo(() => collectAdPhotos(project), [project]);
   const primary = channels[0];
+  const publicationStores = useMemo(
+    () => stores.filter((store) => store.status === "configured" || store.status === "needs_credentials" || store.status === "draft"),
+    [stores],
+  );
+  const selectedStore = publicationStores.find((store) => store.id === selectedStoreId) ?? null;
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadStores() {
+      if (!can(PERMISSIONS.storesView)) {
+        setStoresLoading(false);
+        return;
+      }
+      try {
+        const result = await fetchStores();
+        if (cancelled) return;
+        setStores(result);
+        setSelectedStoreId((current) => current || result[0]?.id || "");
+        setStoresError(null);
+      } catch (error) {
+        if (cancelled) return;
+        setStoresError(error instanceof Error ? error.message : "Falha ao carregar lojas do usuário.");
+      } finally {
+        if (!cancelled) setStoresLoading(false);
+      }
+    }
+    void loadStores();
+    return () => {
+      cancelled = true;
+    };
+  }, [can]);
 
   if (!sales) {
     return (
@@ -38,6 +89,21 @@ export function SalesProductDetail({ project }: Props) {
       window.setTimeout(() => setCopied(null), 1800);
     } catch {
       setCopied("Não foi possível copiar");
+    }
+  }
+
+  async function prepareStoreDraft() {
+    if (!selectedStoreId) return;
+    setDraftLoading(true);
+    setDraftError(null);
+    try {
+      const result = await buildPublicationDraft(selectedStoreId, project.id);
+      setDraft(result);
+    } catch (error) {
+      setDraftError(error instanceof Error ? error.message : "Falha ao preparar cadastro para a loja.");
+      setDraft(null);
+    } finally {
+      setDraftLoading(false);
     }
   }
 
@@ -116,6 +182,26 @@ export function SalesProductDetail({ project }: Props) {
 
       <PhotoDownloadPanel photos={adPhotos} projectName={project.name} />
 
+      <StorePublicationPanel
+        canPublish={can(PERMISSIONS.storesPublish)}
+        canManageStores={can(PERMISSIONS.storesManage)}
+        project={project}
+        stores={publicationStores}
+        storesLoading={storesLoading}
+        storesError={storesError}
+        selectedStoreId={selectedStoreId}
+        onSelectStore={(value) => {
+          setSelectedStoreId(value);
+          setDraft(null);
+          setDraftError(null);
+        }}
+        onPrepareDraft={prepareStoreDraft}
+        selectedStore={selectedStore}
+        draft={draft}
+        draftLoading={draftLoading}
+        draftError={draftError}
+      />
+
       <section className="panel p-5 md:p-6">
         <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
           <div>
@@ -148,6 +234,201 @@ export function SalesProductDetail({ project }: Props) {
         <ArtifactPanel title="Arquivos exportados" items={project.artifacts} />
         <ArtifactPanel title="Relatórios e previews" items={[...project.reports, ...project.previews]} />
       </section>
+    </div>
+  );
+}
+
+function StorePublicationPanel({
+  canPublish,
+  canManageStores,
+  project,
+  stores,
+  storesLoading,
+  storesError,
+  selectedStoreId,
+  onSelectStore,
+  onPrepareDraft,
+  selectedStore,
+  draft,
+  draftLoading,
+  draftError,
+}: {
+  canPublish: boolean;
+  canManageStores: boolean;
+  project: ProjectDetail;
+  stores: StoreIntegration[];
+  storesLoading: boolean;
+  storesError: string | null;
+  selectedStoreId: string;
+  onSelectStore: (value: string) => void;
+  onPrepareDraft: () => void;
+  selectedStore: StoreIntegration | null;
+  draft: ProductPublishDraft | null;
+  draftLoading: boolean;
+  draftError: string | null;
+}) {
+  return (
+    <section className="panel p-5 md:p-6">
+      <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+        <div>
+          <p className="section-kicker">Lojas do usuário</p>
+          <h2 className="mt-2 text-2xl font-semibold text-slate-950">Cadastrar este produto em uma loja</h2>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            A publicação sempre usa apenas as lojas do usuário logado. Assim o produto não corre risco de ir para a conta errada.
+          </p>
+        </div>
+        <span className="pill">{storesLoading ? "Carregando lojas..." : `${stores.length} lojas disponíveis`}</span>
+      </div>
+
+      {!canPublish ? (
+        <div className="mt-5 rounded-[1.3rem] border border-slate-900/10 bg-white p-5 text-sm leading-6 text-slate-600">
+          Seu perfil não tem permissão para publicar em lojas.
+        </div>
+      ) : storesError ? (
+        <div className="mt-5 rounded-[1.3rem] border border-red-200 bg-red-50 p-5 text-sm leading-6 text-red-700">{storesError}</div>
+      ) : stores.length === 0 ? (
+        <div className="mt-5 rounded-[1.3rem] border border-slate-900/10 bg-white p-5 text-sm leading-6 text-slate-600">
+          Nenhuma loja foi cadastrada para este usuário.
+          {canManageStores ? (
+            <>
+              {" "}
+              <Link href="/stores" className="font-semibold text-orange-700 underline">
+                Cadastre uma loja antes de publicar.
+              </Link>
+            </>
+          ) : null}
+        </div>
+      ) : (
+        <div className="mt-6 space-y-5">
+          <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
+            <div className="rounded-[1.3rem] border border-slate-900/10 bg-white p-5">
+              <label className="block">
+                <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Escolha a loja de destino</span>
+                <select
+                  value={selectedStoreId}
+                  onChange={(event) => onSelectStore(event.target.value)}
+                  className="mt-3 w-full rounded-[1.1rem] border border-slate-900/10 bg-white px-4 py-4 text-base text-slate-950 outline-none focus:border-orange-500"
+                >
+                  {stores.map((store) => (
+                    <option key={store.id} value={store.id}>
+                      {store.marketplace_label} · {store.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              {selectedStore ? (
+                <div className="mt-4 grid gap-3 md:grid-cols-2">
+                  <StoreSummaryLine label="Loja" value={selectedStore.name} />
+                  <StoreSummaryLine label="Marketplace" value={selectedStore.marketplace_label} />
+                  <StoreSummaryLine label="Conta" value={selectedStore.account_label || "Sem apelido"} />
+                  <StoreSummaryLine label="Status" value={selectedStore.status} />
+                </div>
+              ) : null}
+
+              <div className="mt-5 flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  onClick={onPrepareDraft}
+                  disabled={!selectedStoreId || draftLoading}
+                  className="rounded-full bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {draftLoading ? "Preparando cadastro..." : "Cadastrar nesta loja"}
+                </button>
+                {canManageStores ? (
+                  <Link href="/stores" className="rounded-full border border-slate-900/10 bg-white px-5 py-3 text-sm font-semibold text-slate-900">
+                    Gerenciar lojas
+                  </Link>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="rounded-[1.3rem] border border-slate-900/10 bg-slate-50/80 p-5">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Contexto do cadastro</p>
+              <h3 className="mt-2 text-lg font-semibold text-slate-950">{project.name}</h3>
+              <ul className="mt-4 space-y-2 text-sm leading-6 text-slate-600">
+                <li>O rascunho usa a ficha comercial deste produto como base.</li>
+                <li>Preço, descrição, imagens e atributos são preparados para a loja escolhida.</li>
+                <li>Se a loja não estiver pronta, o sistema mostra bloqueios antes da publicação.</li>
+              </ul>
+            </div>
+          </div>
+
+          {draftError ? (
+            <div className="rounded-[1.3rem] border border-red-200 bg-red-50 p-5 text-sm leading-6 text-red-700">{draftError}</div>
+          ) : null}
+
+          {draft ? (
+            <div className="grid gap-5 xl:grid-cols-[0.85fr_1.15fr]">
+              <div className="rounded-[1.3rem] border border-slate-900/10 bg-white p-5">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Resultado do cadastro</p>
+                <h3 className="mt-2 text-xl font-semibold text-slate-950">{draft.store_name}</h3>
+                <p className="mt-2 text-sm leading-6 text-slate-600">
+                  Marketplace: {draft.marketplace} · status do rascunho: {draft.status}
+                </p>
+                <div className="mt-4 rounded-[1rem] border border-slate-900/10 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-900">
+                  Publicação real: {draft.can_publish ? "liberada" : "bloqueada até validar os itens obrigatórios"}
+                </div>
+                <DraftList title="Bloqueios" items={draft.blockers} emptyText="Nenhum bloqueio no momento." tone="danger" />
+                <DraftList title="Avisos" items={draft.warnings} emptyText="Nenhum aviso adicional." tone="warning" />
+                <DraftList title="Próximos passos" items={draft.next_steps} emptyText="Nenhuma ação pendente." tone="neutral" />
+              </div>
+
+              <div className="rounded-[1.3rem] border border-slate-900/10 bg-white p-5">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Payload preparado</p>
+                <pre className="mt-4 overflow-x-auto rounded-[1rem] border border-slate-900/10 bg-slate-950 p-4 text-xs leading-6 text-slate-100">
+{JSON.stringify(draft.payload, null, 2)}
+                </pre>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function StoreSummaryLine({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-[1rem] border border-slate-900/10 bg-slate-50 px-4 py-3">
+      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">{label}</p>
+      <p className="mt-1 text-sm font-semibold text-slate-900">{value}</p>
+    </div>
+  );
+}
+
+function DraftList({
+  title,
+  items,
+  emptyText,
+  tone,
+}: {
+  title: string;
+  items: string[];
+  emptyText: string;
+  tone: "danger" | "warning" | "neutral";
+}) {
+  const toneClass =
+    tone === "danger"
+      ? "border-red-200 bg-red-50 text-red-800"
+      : tone === "warning"
+        ? "border-orange-200 bg-orange-50 text-orange-900"
+        : "border-slate-900/10 bg-slate-50 text-slate-700";
+
+  return (
+    <div className="mt-4">
+      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">{title}</p>
+      <div className={`mt-2 rounded-[1rem] border px-4 py-3 ${toneClass}`}>
+        {items.length === 0 ? (
+          <p className="text-sm leading-6">{emptyText}</p>
+        ) : (
+          <ul className="space-y-2 text-sm leading-6">
+            {items.map((item) => (
+              <li key={item}>• {item}</li>
+            ))}
+          </ul>
+        )}
+      </div>
     </div>
   );
 }
