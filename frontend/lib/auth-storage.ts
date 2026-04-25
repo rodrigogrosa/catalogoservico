@@ -3,6 +3,9 @@ export type AuthUser = {
   display_name: string;
   role: string;
   provider: string;
+  role_label?: string | null;
+  permissions: string[];
+  status?: string;
 };
 
 export type AuthSession = {
