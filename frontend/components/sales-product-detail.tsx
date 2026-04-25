@@ -8,6 +8,7 @@ import {
   buildPublicationDraft,
   fetchStores,
   fileUrl,
+  updateStore,
   type ArtifactReference,
   type MarketplaceAttribute,
   type ProductPublishDraft,
@@ -33,6 +34,9 @@ export function SalesProductDetail({ project }: Props) {
   const [draft, setDraft] = useState<ProductPublishDraft | null>(null);
   const [draftLoading, setDraftLoading] = useState(false);
   const [draftError, setDraftError] = useState<string | null>(null);
+  const [saveStoreLoading, setSaveStoreLoading] = useState(false);
+  const [storeSettingsMessage, setStoreSettingsMessage] = useState<string | null>(null);
+  const [categoryId, setCategoryId] = useState("");
   const imageUrl = fileUrl(project.preview_url);
   const hasImagePreview = imageUrl ? /\.(png|jpe?g|webp)(\?.*)?$/i.test(imageUrl) : false;
   const channels = useMemo(() => sales?.marketplace_attributes ?? [], [sales]);
@@ -43,6 +47,11 @@ export function SalesProductDetail({ project }: Props) {
     [stores],
   );
   const selectedStore = publicationStores.find((store) => store.id === selectedStoreId) ?? null;
+
+  useEffect(() => {
+    setCategoryId(typeof selectedStore?.settings?.category_id === "string" ? selectedStore.settings.category_id : "");
+    setStoreSettingsMessage(null);
+  }, [selectedStoreId, selectedStore]);
 
   useEffect(() => {
     let cancelled = false;
@@ -102,6 +111,42 @@ export function SalesProductDetail({ project }: Props) {
     } catch (error) {
       setDraftError(error instanceof Error ? error.message : "Falha ao preparar cadastro para a loja.");
       setDraft(null);
+    } finally {
+      setDraftLoading(false);
+    }
+  }
+
+  async function saveStoreSettings() {
+    if (!selectedStore) return;
+    setSaveStoreLoading(true);
+    setStoreSettingsMessage(null);
+    try {
+      const updated = await updateStore(selectedStore.id, {
+        settings: {
+          ...(selectedStore.settings ?? {}),
+          category_id: categoryId.trim(),
+        },
+      });
+      setStores((current) => current.map((store) => (store.id === updated.id ? updated : store)));
+      setStoreSettingsMessage("Configuração da loja atualizada.");
+      setDraft(null);
+      setDraftError(null);
+    } catch (error) {
+      setStoreSettingsMessage(error instanceof Error ? error.message : "Falha ao salvar categoria da loja.");
+    } finally {
+      setSaveStoreLoading(false);
+    }
+  }
+
+  async function publishNow() {
+    if (!selectedStoreId) return;
+    setDraftLoading(true);
+    setDraftError(null);
+    try {
+      const result = await buildPublicationDraft(selectedStoreId, project.id, { mode: "publish", stock: 1 });
+      setDraft(result);
+    } catch (error) {
+      setDraftError(error instanceof Error ? error.message : "Falha ao publicar produto.");
     } finally {
       setDraftLoading(false);
     }
@@ -196,10 +241,16 @@ export function SalesProductDetail({ project }: Props) {
           setDraftError(null);
         }}
         onPrepareDraft={prepareStoreDraft}
+        onPublishNow={publishNow}
+        onSaveStoreSettings={saveStoreSettings}
         selectedStore={selectedStore}
         draft={draft}
         draftLoading={draftLoading}
         draftError={draftError}
+        categoryId={categoryId}
+        onCategoryIdChange={setCategoryId}
+        saveStoreLoading={saveStoreLoading}
+        storeSettingsMessage={storeSettingsMessage}
       />
 
       <section className="panel p-5 md:p-6">
@@ -248,10 +299,16 @@ function StorePublicationPanel({
   selectedStoreId,
   onSelectStore,
   onPrepareDraft,
+  onPublishNow,
+  onSaveStoreSettings,
   selectedStore,
   draft,
   draftLoading,
   draftError,
+  categoryId,
+  onCategoryIdChange,
+  saveStoreLoading,
+  storeSettingsMessage,
 }: {
   canPublish: boolean;
   canManageStores: boolean;
@@ -262,10 +319,16 @@ function StorePublicationPanel({
   selectedStoreId: string;
   onSelectStore: (value: string) => void;
   onPrepareDraft: () => void;
+  onPublishNow: () => void;
+  onSaveStoreSettings: () => void;
   selectedStore: StoreIntegration | null;
   draft: ProductPublishDraft | null;
   draftLoading: boolean;
   draftError: string | null;
+  categoryId: string;
+  onCategoryIdChange: (value: string) => void;
+  saveStoreLoading: boolean;
+  storeSettingsMessage: string | null;
 }) {
   return (
     <section className="panel p-5 md:p-6">
@@ -318,12 +381,40 @@ function StorePublicationPanel({
               </label>
 
               {selectedStore ? (
-                <div className="mt-4 grid gap-3 md:grid-cols-2">
-                  <StoreSummaryLine label="Loja" value={selectedStore.name} />
-                  <StoreSummaryLine label="Marketplace" value={selectedStore.marketplace_label} />
-                  <StoreSummaryLine label="Conta" value={selectedStore.account_label || "Sem apelido"} />
-                  <StoreSummaryLine label="Status" value={selectedStore.status} />
-                </div>
+                <>
+                  <div className="mt-4 grid gap-3 md:grid-cols-2">
+                    <StoreSummaryLine label="Loja" value={selectedStore.name} />
+                    <StoreSummaryLine label="Marketplace" value={selectedStore.marketplace_label} />
+                    <StoreSummaryLine label="Conta" value={selectedStore.account_label || "Sem apelido"} />
+                    <StoreSummaryLine label="Status" value={selectedStore.status} />
+                  </div>
+
+                  <div className="mt-4 rounded-[1.2rem] border border-slate-900/10 bg-slate-50 p-4">
+                    <label className="block">
+                      <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Categoria MLB do produto</span>
+                      <input
+                        value={categoryId}
+                        onChange={(event) => onCategoryIdChange(event.target.value)}
+                        placeholder="Ex.: MLB3937"
+                        className="mt-3 w-full rounded-[1rem] border border-slate-900/10 bg-white px-4 py-3 text-base text-slate-950 outline-none focus:border-orange-500"
+                      />
+                    </label>
+                    <p className="mt-2 text-sm leading-6 text-slate-600">
+                      Informe a categoria correta do Mercado Livre para remover o bloqueio de publicação.
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-3">
+                      <button
+                        type="button"
+                        onClick={onSaveStoreSettings}
+                        disabled={saveStoreLoading}
+                        className="rounded-full border border-slate-900/10 bg-white px-4 py-2.5 text-sm font-semibold text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {saveStoreLoading ? "Salvando..." : "Salvar categoria"}
+                      </button>
+                      {storeSettingsMessage ? <span className="pill">{storeSettingsMessage}</span> : null}
+                    </div>
+                  </div>
+                </>
               ) : null}
 
               <div className="mt-5 flex flex-wrap gap-3">
@@ -334,6 +425,14 @@ function StorePublicationPanel({
                   className="rounded-full bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {draftLoading ? "Preparando cadastro..." : "Cadastrar nesta loja"}
+                </button>
+                <button
+                  type="button"
+                  onClick={onPublishNow}
+                  disabled={!selectedStoreId || draftLoading}
+                  className="rounded-full bg-orange-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {draftLoading ? "Publicando..." : "Publicar agora"}
                 </button>
                 {canManageStores ? (
                   <Link href="/stores" className="rounded-full border border-slate-900/10 bg-white px-5 py-3 text-sm font-semibold text-slate-900">
@@ -369,6 +468,20 @@ function StorePublicationPanel({
                 <div className="mt-4 rounded-[1rem] border border-slate-900/10 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-900">
                   Publicação real: {draft.can_publish ? "liberada" : "bloqueada até validar os itens obrigatórios"}
                 </div>
+                {draft.status === "published" ? (
+                  <div className="mt-4 rounded-[1rem] border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm leading-6 text-emerald-900">
+                    Produto publicado com sucesso.
+                    {draft.published_item_id ? ` ID do anúncio: ${draft.published_item_id}.` : ""}
+                    {draft.published_permalink ? (
+                      <>
+                        {" "}
+                        <a href={draft.published_permalink} target="_blank" rel="noreferrer" className="font-semibold underline">
+                          Abrir anúncio
+                        </a>
+                      </>
+                    ) : null}
+                  </div>
+                ) : null}
                 <DraftList title="Bloqueios" items={draft.blockers} emptyText="Nenhum bloqueio no momento." tone="danger" />
                 <DraftList title="Avisos" items={draft.warnings} emptyText="Nenhum aviso adicional." tone="warning" />
                 <DraftList title="Próximos passos" items={draft.next_steps} emptyText="Nenhuma ação pendente." tone="neutral" />

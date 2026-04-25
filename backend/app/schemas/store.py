@@ -112,7 +112,7 @@ class ProductPublishRequest(BaseModel):
 
 
 class ProductPublishDraftResponse(BaseModel):
-    status: Literal["draft_ready", "blocked", "not_implemented"]
+    status: Literal["draft_ready", "blocked", "not_implemented", "published"]
     store_id: str
     store_name: str
     marketplace: MarketplaceCode
@@ -122,3 +122,6 @@ class ProductPublishDraftResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     payload: dict[str, Any] = Field(default_factory=dict)
     next_steps: list[str] = Field(default_factory=list)
+    published_item_id: str | None = None
+    published_permalink: str | None = None
+    publication_reference: dict[str, Any] = Field(default_factory=dict)

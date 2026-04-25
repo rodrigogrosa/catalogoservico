@@ -428,10 +428,29 @@ class StoreService:
         product_payload = self.build_payload_for_marketplace(connector, store, project.model_dump(), payload)
         credential_blockers = self.missing_required_credentials(connector, store.get("credentials", {}))
         blockers = [*credential_blockers, *self.marketplace_publish_blockers(connector, store, product_payload)]
-        if payload.mode == "publish":
-            blockers.append("Publicação automática real ainda está bloqueada até o adaptador de API do marketplace ser ativado.")
         if not product_payload.get("images"):
             blockers.append("Nenhuma imagem pública foi encontrada. Gere/baixe imagens ou configure image_base_url.")
+
+        if payload.mode == "publish" and not blockers:
+            publication_result = self.publish_product(connector, store, product_payload)
+            return ProductPublishDraftResponse(
+                status="published",
+                store_id=store["id"],
+                store_name=store["name"],
+                marketplace=store["marketplace"],
+                project_id=project_id,
+                can_publish=True,
+                blockers=[],
+                warnings=[
+                    "Revise regras de propriedade intelectual antes de publicar personagens/licenciados.",
+                    "Confirme prazo de produção e estoque antes de ativar anúncio.",
+                ],
+                payload=product_payload,
+                next_steps=["Anúncio publicado. Revise título, fotos e atributos diretamente no marketplace."],
+                published_item_id=str(publication_result.get("id", "")) or None,
+                published_permalink=publication_result.get("permalink"),
+                publication_reference=publication_result,
+            )
 
         return ProductPublishDraftResponse(
             status="blocked" if blockers else "draft_ready",
@@ -439,7 +458,7 @@ class StoreService:
             store_name=store["name"],
             marketplace=store["marketplace"],
             project_id=project_id,
-            can_publish=False,
+            can_publish=not blockers,
             blockers=blockers,
             warnings=[
                 "Revise regras de propriedade intelectual antes de publicar personagens/licenciados.",
@@ -475,7 +494,7 @@ class StoreService:
                 "condition": "new",
                 "listing_type_id": store.get("settings", {}).get("listing_type_id", "gold_special"),
                 "pictures": [{"source": image} for image in images],
-                "description": {"plain_text": description},
+                "description_plain_text": description,
                 "attributes": channel.get("registration_attributes", []),
                 "images": images,
             }
@@ -539,6 +558,84 @@ class StoreService:
             steps.append("Resolva os bloqueios listados antes de ativar publicação automática.")
         steps.extend(connector.implementation_notes)
         return steps
+
+    def publish_product(
+        self,
+        connector: MarketplaceConnector,
+        store: dict[str, Any],
+        product_payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        if connector.marketplace == "mercado_livre":
+            return self.publish_mercado_livre_item(store, product_payload)
+        raise ValueError(f"Publicação automática ainda não implementada para {connector.marketplace}.")
+
+    def publish_mercado_livre_item(self, store: dict[str, Any], product_payload: dict[str, Any]) -> dict[str, Any]:
+        access_token = str(store.get("credentials", {}).get("access_token", "")).strip()
+        if not access_token:
+            raise ValueError("Mercado Livre: access_token ausente para publicação.")
+
+        item_payload = {
+            key: value
+            for key, value in product_payload.items()
+            if key in {"title", "category_id", "price", "currency_id", "available_quantity", "buying_mode", "condition", "listing_type_id", "pictures", "attributes"}
+        }
+        item_payload["sale_terms"] = store.get("settings", {}).get("sale_terms", [])
+
+        self.mercado_livre_api_request(
+            access_token=access_token,
+            method="POST",
+            path="/items/validate",
+            payload=item_payload,
+        )
+
+        created = self.mercado_livre_api_request(
+            access_token=access_token,
+            method="POST",
+            path="/items",
+            payload=item_payload,
+        )
+        item_id = str(created.get("id", "")).strip()
+        description_plain_text = str(product_payload.get("description_plain_text", "")).strip()
+        if item_id and description_plain_text:
+            try:
+                self.mercado_livre_api_request(
+                    access_token=access_token,
+                    method="POST",
+                    path=f"/items/{item_id}/description",
+                    payload={"plain_text": description_plain_text},
+                )
+            except ValueError:
+                pass
+        return created
+
+    def mercado_livre_api_request(
+        self,
+        *,
+        access_token: str,
+        method: str,
+        path: str,
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        data = json.dumps(payload).encode("utf-8") if payload is not None else None
+        request = Request(
+            f"https://api.mercadolibre.com{path}",
+            data=data,
+            method=method,
+            headers={
+                "accept": "application/json",
+                "content-type": "application/json",
+                "authorization": f"Bearer {access_token}",
+            },
+        )
+        try:
+            with urlopen(request, timeout=30) as response:  # noqa: S310
+                body = response.read().decode("utf-8")
+                return json.loads(body) if body else {}
+        except HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise ValueError(f"Mercado Livre API {path} falhou: HTTP {exc.code}: {detail}") from exc
+        except URLError as exc:
+            raise ValueError(f"Falha de rede ao publicar no Mercado Livre: {exc.reason}") from exc
 
     def marketplace_publish_blockers(
         self,

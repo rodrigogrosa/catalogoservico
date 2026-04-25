@@ -292,7 +292,7 @@ export type StorePayload = {
 };
 
 export type ProductPublishDraft = {
-  status: "draft_ready" | "blocked" | "not_implemented";
+  status: "draft_ready" | "blocked" | "not_implemented" | "published";
   store_id: string;
   store_name: string;
   marketplace: MarketplaceCode;
@@ -302,6 +302,9 @@ export type ProductPublishDraft = {
   warnings: string[];
   payload: Record<string, unknown>;
   next_steps: string[];
+  published_item_id?: string | null;
+  published_permalink?: string | null;
+  publication_reference?: Record<string, unknown>;
 };
 
 export type StoreOAuthAuthorization = {
@@ -833,6 +836,19 @@ export async function createStore(payload: StorePayload): Promise<StoreIntegrati
   return response.json();
 }
 
+export async function updateStore(id: string, payload: Partial<StorePayload> & { status?: "draft" | "configured" | "needs_credentials" | "disabled" }): Promise<StoreIntegration> {
+  const response = await apiFetchResilient(`/stores/${id}`, {
+    method: "PUT",
+    headers: {
+      ...authHeaders(),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw await parseApiError(response, "Falha ao atualizar loja.");
+  return response.json();
+}
+
 export async function deleteStore(id: string): Promise<void> {
   const response = await apiFetchResilient(`/stores/${id}`, {
     method: "DELETE",
@@ -853,14 +869,18 @@ export async function startMercadoLivreOAuth(storeId: string): Promise<StoreOAut
   return response.json();
 }
 
-export async function buildPublicationDraft(storeId: string, projectId: string): Promise<ProductPublishDraft> {
+export async function buildPublicationDraft(
+  storeId: string,
+  projectId: string,
+  options?: { mode?: "draft" | "validate" | "publish"; stock?: number },
+): Promise<ProductPublishDraft> {
   const response = await apiFetchResilient(`/stores/${storeId}/publish/${projectId}`, {
     method: "POST",
     headers: {
       ...authHeaders(),
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ mode: "draft", stock: 1, image_base_url: backendOrigin() }),
+    body: JSON.stringify({ mode: options?.mode ?? "draft", stock: options?.stock ?? 1, image_base_url: backendOrigin() }),
   });
   if (!response.ok) throw await parseApiError(response, "Falha ao gerar rascunho de publicação.");
   return response.json();
