@@ -42,16 +42,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     setSession(stored);
-    setLoading(false);
     void fetchCurrentUser()
       .then((user) => {
         const refreshed = { ...stored, user };
         saveStoredAuthSession(refreshed);
         setSession(refreshed);
+        setLoading(false);
       })
       .catch(() => {
         clearStoredAuthSession();
         setSession(null);
+        setLoading(false);
         if (!isPublicAuthRoute) router.replace("/login");
       });
   }, [isPublicAuthRoute, router]);
@@ -76,8 +77,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       loading,
       login,
       logout,
-      can: (permission?: string | null) => hasPermission(session?.user?.permissions, permission),
-      canAny: (permissions: string[]) => hasAnyPermission(session?.user?.permissions, permissions),
+      can: (permission?: string | null) =>
+        hasPermission(session?.user?.permissions, permission, { role: session?.user?.role }),
+      canAny: (permissions: string[]) =>
+        hasAnyPermission(session?.user?.permissions, permissions, { role: session?.user?.role }),
     }),
     [session, loading],
   );

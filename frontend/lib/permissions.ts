@@ -21,11 +21,25 @@ export const PERMISSIONS = {
 
 export type PermissionKey = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
 
-export function hasPermission(permissions: string[] | undefined, permission?: string | null): boolean {
+export function isPrivilegedRole(role?: string | null): boolean {
+  return role === "master";
+}
+
+export function hasPermission(
+  permissions: string[] | undefined,
+  permission?: string | null,
+  options?: { role?: string | null },
+): boolean {
   if (!permission) return true;
+  if (isPrivilegedRole(options?.role)) return true;
   return Boolean(permissions?.includes(permission));
 }
 
-export function hasAnyPermission(permissions: string[] | undefined, required: string[]): boolean {
-  return required.some((item) => hasPermission(permissions, item));
+export function hasAnyPermission(
+  permissions: string[] | undefined,
+  required: string[],
+  options?: { role?: string | null },
+): boolean {
+  if (isPrivilegedRole(options?.role)) return true;
+  return required.some((item) => hasPermission(permissions, item, options));
 }
