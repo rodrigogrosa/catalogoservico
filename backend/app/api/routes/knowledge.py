@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 
-from app.core.auth import require_current_user
+from app.core.auth import require_permission
 from app.schemas.auth import AuthUser
 from app.schemas.knowledge import (
     KnowledgeRuleListResponse,
@@ -18,7 +18,7 @@ router = APIRouter()
 @router.get("/rules", response_model=KnowledgeRuleListResponse)
 async def list_rules(
     service: KnowledgeService = Depends(get_knowledge_service),
-    current_user: AuthUser = Depends(require_current_user),
+    current_user: AuthUser = Depends(require_permission("knowledge.view")),
 ) -> KnowledgeRuleListResponse:
     _ = current_user
     return KnowledgeRuleListResponse(items=service.list_rules())
@@ -27,7 +27,7 @@ async def list_rules(
 @router.get("/incidents", response_model=SlicerIncidentListResponse)
 async def list_incidents(
     service: KnowledgeService = Depends(get_knowledge_service),
-    current_user: AuthUser = Depends(require_current_user),
+    current_user: AuthUser = Depends(require_permission("knowledge.view")),
 ) -> SlicerIncidentListResponse:
     _ = current_user
     return SlicerIncidentListResponse(items=service.list_incidents())
@@ -37,7 +37,7 @@ async def list_incidents(
 async def create_incident(
     payload: SlicerIncidentCreate,
     service: KnowledgeService = Depends(get_knowledge_service),
-    current_user: AuthUser = Depends(require_current_user),
+    current_user: AuthUser = Depends(require_permission("knowledge.manage")),
 ) -> SlicerIncidentCreateResponse:
     _ = current_user
     incident, learned_actions = service.record_incident(payload)

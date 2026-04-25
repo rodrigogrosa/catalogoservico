@@ -3,7 +3,7 @@ import logging
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
-from app.core.auth import require_current_user
+from app.core.auth import require_permission
 from app.schemas.auth import AuthUser
 from app.schemas.project import (
     ImportUrlRequest,
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 @router.get("", response_model=ProjectListResponse)
 async def list_projects(
     service: ProjectService = Depends(get_project_service),
-    current_user: AuthUser = Depends(require_current_user),
+    current_user: AuthUser = Depends(require_permission("projects.view")),
 ) -> ProjectListResponse:
     logger.info("projects_list_requested", extra={"username": current_user.username})
     return ProjectListResponse(items=service.list_projects())
@@ -35,7 +35,7 @@ async def list_projects(
 async def get_project(
     project_id: str,
     service: ProjectService = Depends(get_project_service),
-    current_user: AuthUser = Depends(require_current_user),
+    current_user: AuthUser = Depends(require_permission("projects.view")),
 ) -> ProjectDetailResponse:
     logger.info("project_detail_requested", extra={"username": current_user.username, "project_id": project_id})
     project = service.get_project(project_id)
@@ -48,7 +48,7 @@ async def get_project(
 async def delete_project(
     project_id: str,
     service: ProjectService = Depends(get_project_service),
-    current_user: AuthUser = Depends(require_current_user),
+    current_user: AuthUser = Depends(require_permission("projects.delete")),
 ) -> dict[str, str]:
     logger.info("project_delete_requested", extra={"username": current_user.username, "project_id": project_id})
     try:
@@ -65,7 +65,7 @@ async def upload_project(
     files: list[UploadFile] = File(...),
     project_name: str | None = Form(default=None),
     service: ProjectService = Depends(get_project_service),
-    current_user: AuthUser = Depends(require_current_user),
+    current_user: AuthUser = Depends(require_permission("projects.create")),
 ) -> ProjectDetailResponse:
     logger.info(
         "project_upload_requested",
@@ -86,7 +86,7 @@ async def upload_project(
 async def import_project_url(
     payload: ImportUrlRequest,
     service: ProjectService = Depends(get_project_service),
-    current_user: AuthUser = Depends(require_current_user),
+    current_user: AuthUser = Depends(require_permission("projects.create")),
 ) -> ProjectDetailResponse:
     logger.info(
         "project_import_url_requested",
@@ -107,7 +107,7 @@ async def process_project(
     project_id: str,
     payload: ProcessProjectRequest,
     service: ProjectService = Depends(get_project_service),
-    current_user: AuthUser = Depends(require_current_user),
+    current_user: AuthUser = Depends(require_permission("projects.process")),
 ) -> ProjectSummary:
     logger.info("project_process_requested", extra={"username": current_user.username, "project_id": project_id})
     project = service.get_project(project_id)
@@ -124,7 +124,7 @@ async def process_project(
 async def build_project_bundle(
     project_id: str,
     service: ProjectService = Depends(get_project_service),
-    current_user: AuthUser = Depends(require_current_user),
+    current_user: AuthUser = Depends(require_permission("projects.download")),
 ) -> ProjectBundleResponse:
     logger.info("project_bundle_requested", extra={"username": current_user.username, "project_id": project_id})
     project = service.get_project(project_id)
@@ -138,7 +138,7 @@ async def compare_projects(
     project_id: str,
     other_project_id: str,
     service: ProjectService = Depends(get_project_service),
-    current_user: AuthUser = Depends(require_current_user),
+    current_user: AuthUser = Depends(require_permission("projects.view")),
 ) -> ProjectCompareResponse:
     logger.info(
         "project_compare_requested",

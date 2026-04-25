@@ -12,6 +12,7 @@ from urllib.parse import urlencode, quote
 
 from app.core.config import get_settings
 from app.schemas.auth import (
+    AccessModelResponse,
     AuthUser,
     LoginResponse,
     OAuthProviderStatus,
@@ -20,11 +21,13 @@ from app.schemas.auth import (
     SocialLoginProviderConfig,
     SocialLoginProviderConfigUpdateRequest,
 )
+from app.services.user_service import UserService
 
 
 class AuthService:
     def __init__(self) -> None:
         self.settings = get_settings()
+        self.user_service = UserService()
         self.data_dir = self.settings.storage_root / "_system"
         self.data_path = self.data_dir / "social_login.json"
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -32,23 +35,16 @@ class AuthService:
     def authenticate_master(self, username: str, password: str) -> LoginResponse | None:
         expected_user = self.settings.master_username
         valid_passwords = [self.settings.master_password, *self.settings.master_password_aliases]
-        if not hmac.compare_digest(username.strip(), expected_user):
-            return None
-        if not any(hmac.compare_digest(password, valid_password) for valid_password in valid_passwords):
-            return None
+        normalized_username = username.strip()
+        if hmac.compare_digest(normalized_username, expected_user) and any(
+            hmac.compare_digest(password, valid_password) for valid_password in valid_passwords
+        ):
+            return self.issue_session(self.user_service.master_user())
 
-        expires_at = datetime.now(tz=timezone.utc) + timedelta(hours=self.settings.auth_token_ttl_hours)
-        user = AuthUser(
-            username=expected_user,
-            display_name="Rodrigo Rosa",
-            role="master",
-            provider="master",
-        )
-        return LoginResponse(
-            access_token=self.create_token(user, expires_at),
-            expires_at=expires_at.isoformat(),
-            user=user,
-        )
+        local_user = self.user_service.authenticate_local(normalized_username, password)
+        if local_user is None:
+            return None
+        return self.issue_session(local_user)
 
     def authenticate_social_user(
         self,
@@ -58,15 +54,13 @@ class AuthService:
         email: str | None,
         display_name: str | None,
     ) -> LoginResponse:
-        expires_at = datetime.now(tz=timezone.utc) + timedelta(hours=self.settings.auth_token_ttl_hours)
         username = (email or f"{provider}:{subject}").strip()
         label = (display_name or email or subject).strip()
-        user = AuthUser(
-            username=username,
-            display_name=label,
-            role="user",
-            provider=provider,
-        )
+        user = self.user_service.ensure_social_user(username=username, display_name=label, provider=provider)
+        return self.issue_session(user)
+
+    def issue_session(self, user: AuthUser) -> LoginResponse:
+        expires_at = datetime.now(tz=timezone.utc) + timedelta(hours=self.settings.auth_token_ttl_hours)
         return LoginResponse(
             access_token=self.create_token(user, expires_at),
             expires_at=expires_at.isoformat(),
@@ -115,6 +109,20 @@ class AuthService:
             role=str(payload.get("role", "user")),
             provider=str(payload.get("provider", "unknown")),
         )
+
+    def current_user_from_token(self, token: str) -> AuthUser | None:
+        basic = self.validate_token(token)
+        if basic is None:
+            return None
+        resolved = self.user_service.resolve_authenticated_user(
+            username=basic.username,
+            provider=basic.provider,
+            display_name=basic.display_name,
+        )
+        return resolved
+
+    def access_model(self) -> AccessModelResponse:
+        return self.user_service.access_model()
 
     def list_oauth_providers(self) -> list[OAuthProviderStatus]:
         return [self.to_oauth_status(config) for config in self.list_social_provider_configs()]

@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
-from app.core.auth import require_current_user
+from app.core.auth import require_permission
 from app.schemas.auth import AuthUser
 from app.schemas.store import (
     ConnectorListResponse,
@@ -27,7 +27,7 @@ def get_store_service() -> StoreService:
 
 @router.get("/connectors", response_model=ConnectorListResponse)
 async def list_connectors(
-    current_user: AuthUser = Depends(require_current_user),
+    current_user: AuthUser = Depends(require_permission("stores.view")),
     service: StoreService = Depends(get_store_service),
 ) -> ConnectorListResponse:
     _ = current_user
@@ -36,7 +36,7 @@ async def list_connectors(
 
 @router.get("", response_model=StoreListResponse)
 async def list_stores(
-    current_user: AuthUser = Depends(require_current_user),
+    current_user: AuthUser = Depends(require_permission("stores.view")),
     service: StoreService = Depends(get_store_service),
 ) -> StoreListResponse:
     return StoreListResponse(items=service.list_user_stores(current_user))
@@ -45,7 +45,7 @@ async def list_stores(
 @router.post("", response_model=StoreResponse)
 async def create_store(
     payload: StoreCreateRequest,
-    current_user: AuthUser = Depends(require_current_user),
+    current_user: AuthUser = Depends(require_permission("stores.manage")),
     service: StoreService = Depends(get_store_service),
 ) -> StoreResponse:
     return service.create_store(current_user, payload)
@@ -55,7 +55,7 @@ async def create_store(
 async def update_store(
     store_id: str,
     payload: StoreUpdateRequest,
-    current_user: AuthUser = Depends(require_current_user),
+    current_user: AuthUser = Depends(require_permission("stores.manage")),
     service: StoreService = Depends(get_store_service),
 ) -> StoreResponse:
     store = service.update_store(current_user, store_id, payload)
@@ -67,7 +67,7 @@ async def update_store(
 @router.delete("/{store_id}")
 async def delete_store(
     store_id: str,
-    current_user: AuthUser = Depends(require_current_user),
+    current_user: AuthUser = Depends(require_permission("stores.manage")),
     service: StoreService = Depends(get_store_service),
 ) -> dict[str, str]:
     if not service.delete_store(current_user, store_id):
@@ -78,7 +78,7 @@ async def delete_store(
 @router.post("/{store_id}/oauth/mercado-livre/start", response_model=StoreOAuthAuthorizationResponse)
 async def start_mercado_livre_oauth(
     store_id: str,
-    current_user: AuthUser = Depends(require_current_user),
+    current_user: AuthUser = Depends(require_permission("stores.manage")),
     service: StoreService = Depends(get_store_service),
 ) -> StoreOAuthAuthorizationResponse:
     try:
@@ -136,7 +136,7 @@ async def build_publication_draft(
     store_id: str,
     project_id: str,
     payload: ProductPublishRequest,
-    current_user: AuthUser = Depends(require_current_user),
+    current_user: AuthUser = Depends(require_permission("stores.publish")),
     service: StoreService = Depends(get_store_service),
 ) -> ProductPublishDraftResponse:
     result = service.build_publication_draft(current_user, store_id, project_id, payload)

@@ -13,6 +13,9 @@ class AuthUser(BaseModel):
     display_name: str
     role: str
     provider: str
+    role_label: str | None = None
+    permissions: list[str] = Field(default_factory=list)
+    status: str = "active"
 
 
 class LoginResponse(BaseModel):
@@ -81,3 +84,62 @@ class SocialLoginProviderConfigUpdateRequest(BaseModel):
 
 class SocialLoginProviderConfigsResponse(BaseModel):
     providers: list[SocialLoginProviderConfig]
+
+
+class PermissionDefinition(BaseModel):
+    key: str
+    label: str
+    description: str
+    category: str
+
+
+class RoleDefinition(BaseModel):
+    key: str
+    label: str
+    description: str
+    permissions: list[str] = Field(default_factory=list)
+
+
+class AccessModelResponse(BaseModel):
+    permissions: list[PermissionDefinition]
+    roles: list[RoleDefinition]
+
+
+class UserRecordResponse(BaseModel):
+    id: str
+    username: str
+    display_name: str
+    role: str
+    role_label: str
+    provider: str
+    status: str
+    permissions: list[str] = Field(default_factory=list)
+    granted_permissions: list[str] = Field(default_factory=list)
+    revoked_permissions: list[str] = Field(default_factory=list)
+    created_at: str | None = None
+    updated_at: str | None = None
+    last_login_at: str | None = None
+
+
+class UserListResponse(BaseModel):
+    items: list[UserRecordResponse]
+
+
+class UserCreateRequest(BaseModel):
+    username: str
+    display_name: str
+    role: str
+    provider: str = "local"
+    password: str | None = None
+    status: str = "active"
+    granted_permissions: list[str] = Field(default_factory=list)
+    revoked_permissions: list[str] = Field(default_factory=list)
+
+
+class UserUpdateRequest(BaseModel):
+    display_name: str | None = None
+    role: str | None = None
+    password: str | None = None
+    status: str | None = None
+    granted_permissions: list[str] | None = None
+    revoked_permissions: list[str] | None = None

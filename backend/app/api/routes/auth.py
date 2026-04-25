@@ -3,8 +3,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Path, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from app.core.auth import require_current_user
+from app.core.auth import require_current_user, require_permission
 from app.schemas.auth import (
+    AccessModelResponse,
     AuthUser,
     LoginRequest,
     LoginResponse,
@@ -36,6 +37,15 @@ async def me(current_user: AuthUser = Depends(require_current_user)) -> AuthUser
     return current_user
 
 
+@router.get("/access-model", response_model=AccessModelResponse)
+async def access_model(
+    current_user: AuthUser = Depends(require_current_user),
+    service: AuthService = Depends(get_auth_service),
+) -> AccessModelResponse:
+    _ = current_user
+    return service.access_model()
+
+
 @router.get("/providers", response_model=OAuthProvidersResponse)
 async def providers(service: AuthService = Depends(get_auth_service)) -> OAuthProvidersResponse:
     return OAuthProvidersResponse(providers=service.list_oauth_providers())
@@ -43,7 +53,7 @@ async def providers(service: AuthService = Depends(get_auth_service)) -> OAuthPr
 
 @router.get("/social-config", response_model=SocialLoginProviderConfigsResponse)
 async def social_config(
-    current_user: AuthUser = Depends(require_current_user),
+    current_user: AuthUser = Depends(require_permission("social_login.manage")),
     service: AuthService = Depends(get_auth_service),
 ) -> SocialLoginProviderConfigsResponse:
     return SocialLoginProviderConfigsResponse(providers=service.list_social_provider_configs())
@@ -53,9 +63,10 @@ async def social_config(
 async def update_social_config(
     payload: SocialLoginProviderConfigUpdateRequest,
     provider: str = Path(...),
-    current_user: AuthUser = Depends(require_current_user),
+    current_user: AuthUser = Depends(require_permission("social_login.manage")),
     service: AuthService = Depends(get_auth_service),
 ) -> SocialLoginProviderConfig:
+    _ = current_user
     updated = service.update_social_provider_config(provider, payload)
     if updated is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Provedor social não encontrado.")

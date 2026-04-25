@@ -20,7 +20,16 @@ def require_current_user(
 ) -> AuthUser:
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Autenticacao obrigatoria.")
-    user = service.validate_token(credentials.credentials)
+    user = service.current_user_from_token(credentials.credentials)
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Sessao invalida ou expirada.")
     return user
+
+
+def require_permission(permission: str):
+    def dependency(current_user: AuthUser = Depends(require_current_user)) -> AuthUser:
+        if permission not in set(current_user.permissions):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permissão insuficiente.")
+        return current_user
+
+    return dependency
