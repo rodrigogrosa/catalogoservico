@@ -19,7 +19,7 @@ export function ProjectPageSectionClient({
   section,
 }: {
   id: string;
-  section: "overview" | "process" | "diagnostics" | "files";
+  section: "overview" | "process" | "diagnostics" | "files" | "images";
 }) {
   const { can } = useAuth();
   const [project, setProject] = useState<ProjectDetail | null>(null);
@@ -85,6 +85,10 @@ export function ProjectPageSectionClient({
     files: {
       title: `Arquivos · ${project.name}`,
       subtitle: "Entrega, logs, manifesto e bundle final em uma área própria.",
+    },
+    images: {
+      title: `Imagens · ${project.name}`,
+      subtitle: "Galeria completa das fotos e previews disponíveis deste projeto.",
     },
   } as const;
 

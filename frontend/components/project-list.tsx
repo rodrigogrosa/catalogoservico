@@ -3,9 +3,11 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
+import { useAuth } from "@/components/auth-provider";
 import { StatusBadge } from "@/components/status-badge";
 import { deleteProject, fetchProjectBundle, fileUrl, ProjectSummary } from "@/lib/api";
 import { downloadUrlToUser } from "@/lib/download";
+import { PERMISSIONS } from "@/lib/permissions";
 
 type Props = {
   items: ProjectSummary[];
@@ -28,6 +30,7 @@ export function ProjectList({
   description = "Encontre rapidamente a versão certa, a imagem principal e o estágio de entrega de cada projeto.",
   onProjectDeleted,
 }: Props) {
+  const { can } = useAuth();
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<(typeof filters)[number]["value"]>("all");
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -101,6 +104,9 @@ export function ProjectList({
               key={project.id}
               deleting={deletingId === project.id}
               downloading={downloadingId === project.id}
+              canDelete={can(PERMISSIONS.projectsDelete)}
+              canDownload={can(PERMISSIONS.projectsDownload)}
+              canOpen={can(PERMISSIONS.projectsView)}
               onDownload={async () => {
                 setDeleteError(null);
                 setDownloadStatus(null);
@@ -147,12 +153,18 @@ export function ProjectList({
 function ProjectCard({
   deleting,
   downloading,
+  canDelete,
+  canDownload,
+  canOpen,
   onDelete,
   onDownload,
   project,
 }: {
   deleting: boolean;
   downloading: boolean;
+  canDelete: boolean;
+  canDownload: boolean;
+  canOpen: boolean;
   onDelete: () => void;
   onDownload: () => void;
   project: ProjectSummary;
@@ -203,26 +215,44 @@ function ProjectCard({
             <InfoBlock label="Imprimibilidade" value={riskLabel} highlight={score?.level === "high"} />
           </div>
 
-          <div className="mt-6 flex flex-wrap gap-3">
-            <Link href={`/projects/${project.id}`} className="portal-action portal-action-primary">
-              Abrir projeto
+          <div className="mt-5 flex flex-wrap items-center gap-3 text-sm text-slate-600">
+            <span className="pill">{hasImagePreview ? "Imagem principal disponível" : "Abrir galeria do projeto"}</span>
+            <Link href={`/projects/${project.id}/images`} className="font-semibold text-orange-700 underline underline-offset-4">
+              Abrir galeria do projeto
             </Link>
-            <button
-              type="button"
-              disabled={downloading}
-              onClick={onDownload}
-              className="portal-action"
-            >
-              {downloading ? "Preparando download..." : "Baixar projeto"}
-            </button>
-            <button
-              type="button"
-              disabled={deleting || project.status === "processing"}
-              onClick={onDelete}
-              className="portal-action border-red-200 bg-red-50 text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {deleting ? "Excluindo..." : "Excluir"}
-            </button>
+          </div>
+
+          <div className="mt-6 flex flex-wrap gap-3">
+            {canOpen ? (
+              <Link href={`/projects/${project.id}`} className="portal-action portal-action-primary">
+                Abrir projeto
+              </Link>
+            ) : null}
+            {canOpen ? (
+              <Link href={`/projects/${project.id}/images`} className="portal-action">
+                Ver imagens
+              </Link>
+            ) : null}
+            {canDownload ? (
+              <button
+                type="button"
+                disabled={downloading}
+                onClick={onDownload}
+                className="portal-action"
+              >
+                {downloading ? "Preparando download..." : "Baixar projeto"}
+              </button>
+            ) : null}
+            {canDelete ? (
+              <button
+                type="button"
+                disabled={deleting || project.status === "processing"}
+                onClick={onDelete}
+                className="portal-action border-red-200 bg-red-50 text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {deleting ? "Excluindo..." : "Excluir"}
+              </button>
+            ) : null}
           </div>
         </div>
       </div>

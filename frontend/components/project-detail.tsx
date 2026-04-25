@@ -25,7 +25,7 @@ import { PERMISSIONS } from "@/lib/permissions";
 
 type Props = {
   project: ProjectDetail;
-  section: "overview" | "process" | "diagnostics" | "files";
+  section: "overview" | "process" | "diagnostics" | "files" | "images";
 };
 
 const defaultPayload: ProcessPayload = {
@@ -82,6 +82,11 @@ const sectionMeta = {
     label: "Arquivos",
     title: "Saídas e rastreabilidade",
     description: "Abra relatórios, logs, manifesto e pacote final em uma área dedicada.",
+  },
+  images: {
+    label: "Imagens",
+    title: "Galeria completa",
+    description: "Veja todas as fotos e previews disponíveis do projeto em uma área própria.",
   },
 } as const;
 
@@ -232,6 +237,8 @@ export function ProjectDetailView({ project, section }: Props) {
           bundlePath={bundlePath}
         />
       ) : null}
+
+      {section === "images" ? <ImagesSection project={currentProject} /> : null}
     </div>
   );
 }
@@ -247,6 +254,7 @@ function ProjectSectionNav({
     { key: "overview", label: "Visão geral", href: `/projects/${projectId}` },
     { key: "process", label: "Processar", href: `/projects/${projectId}/process` },
     { key: "diagnostics", label: "Diagnóstico", href: `/projects/${projectId}/diagnostics` },
+    { key: "images", label: "Imagens", href: `/projects/${projectId}/images` },
     { key: "files", label: "Arquivos", href: `/projects/${projectId}/files` },
   ] as const;
 
@@ -698,6 +706,68 @@ function FilesSection({
   );
 }
 
+function ImagesSection({ project }: { project: ProjectDetail }) {
+  const images = collectProjectImages(project);
+
+  return (
+    <div className="space-y-6">
+      <SectionCard
+        kicker="Galeria"
+        title="Todas as imagens do projeto"
+        description="Aqui ficam reunidas todas as fotos e previews gerados para esta versão, sem esconder nenhuma imagem disponível."
+      >
+        {images.length === 0 ? (
+          <EmptyBlock text="Nenhuma imagem disponível para este projeto ainda." />
+        ) : (
+          <div className="space-y-5">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-base leading-7 text-slate-600">
+                {images.length} {images.length === 1 ? "imagem encontrada" : "imagens encontradas"} para este projeto.
+              </p>
+              <span className="pill">{images.length} fotos</span>
+            </div>
+            <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+              {images.map((image, index) => (
+                <article
+                  key={`${image.href}-${index}`}
+                  className="overflow-hidden rounded-[1.5rem] border border-slate-900/10 bg-white shadow-[0_10px_30px_rgba(15,23,42,0.06)]"
+                >
+                  <a href={image.href} target="_blank" rel="noreferrer" className="block aspect-[4/3] bg-slate-100">
+                    <img src={image.href} alt={`${project.name} - ${image.label}`} className="h-full w-full object-cover" loading="lazy" />
+                  </a>
+                  <div className="space-y-3 p-4">
+                    <div>
+                      <p className="info-label">Imagem {index + 1}</p>
+                      <h3 className="mt-1 text-base font-semibold text-slate-950">{image.label}</h3>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <a
+                        href={image.href}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="rounded-full border border-slate-900/10 bg-white px-4 py-2 text-sm font-semibold text-slate-900"
+                      >
+                        Abrir
+                      </a>
+                      <a
+                        href={image.href}
+                        download={image.filename}
+                        className="rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white"
+                      >
+                        Baixar
+                      </a>
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </div>
+        )}
+      </SectionCard>
+    </div>
+  );
+}
+
 function SectionCard({
   kicker,
   title,
@@ -1058,8 +1128,30 @@ function MessageBanner({ message }: { message: string }) {
 }
 
 function selectMainPreview(project: ProjectDetail) {
-  const preview = project.previews[0] ?? (project.preview_url ? { path: project.preview_url } : null);
-  return preview ? fileUrl(preview.path) ?? null : null;
+  const preview = collectProjectImages(project)[0];
+  return preview?.href ?? null;
+}
+
+function collectProjectImages(project: ProjectDetail) {
+  const candidates = [
+    ...(project.preview_url ? [{ label: "Imagem principal", path: project.preview_url }] : []),
+    ...project.previews.map((item) => ({ label: item.label, path: item.path })),
+  ];
+  const seen = new Set<string>();
+  return candidates
+    .map((item, index) => {
+      const href = fileUrl(item.path);
+      if (!href || !/\.(png|jpe?g|webp)(\?.*)?$/i.test(href)) return null;
+      if (seen.has(href)) return null;
+      seen.add(href);
+      const filename = href.split("/").pop()?.split("?")[0] || `imagem-${index + 1}.png`;
+      return {
+        href,
+        label: item.label || `Imagem ${index + 1}`,
+        filename,
+      };
+    })
+    .filter((item): item is { href: string; label: string; filename: string } => Boolean(item));
 }
 
 function selectProcessingStages(stages: ProcessingStage[], status: string) {
