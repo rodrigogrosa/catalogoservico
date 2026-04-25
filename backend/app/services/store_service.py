@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import mimetypes
 from pathlib import Path
 import secrets
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 from uuid import uuid4
 
@@ -212,6 +213,7 @@ class StoreService:
 
     def list_user_stores(self, user: AuthUser) -> list[StoreResponse]:
         stores = [item for item in self.load_store_records() if item.get("owner_username") == user.username]
+        stores.sort(key=self.store_priority_score, reverse=True)
         return [self.to_response(record) for record in stores]
 
     def create_store(self, user: AuthUser, payload: StoreCreateRequest) -> StoreResponse:
@@ -428,29 +430,38 @@ class StoreService:
         product_payload = self.build_payload_for_marketplace(connector, store, project.model_dump(), payload)
         credential_blockers = self.missing_required_credentials(connector, store.get("credentials", {}))
         blockers = [*credential_blockers, *self.marketplace_publish_blockers(connector, store, product_payload)]
-        if not product_payload.get("images"):
+        if not product_payload.get("images") and not self.can_upload_images_during_publish(connector, store, project.model_dump(), payload):
             blockers.append("Nenhuma imagem pública foi encontrada. Gere/baixe imagens ou configure image_base_url.")
 
         if payload.mode == "publish" and not blockers:
-            publication_result = self.publish_product(connector, store, product_payload)
-            return ProductPublishDraftResponse(
-                status="published",
-                store_id=store["id"],
-                store_name=store["name"],
-                marketplace=store["marketplace"],
-                project_id=project_id,
-                can_publish=True,
-                blockers=[],
-                warnings=[
-                    "Revise regras de propriedade intelectual antes de publicar personagens/licenciados.",
-                    "Confirme prazo de produção e estoque antes de ativar anúncio.",
-                ],
-                payload=product_payload,
-                next_steps=["Anúncio publicado. Revise título, fotos e atributos diretamente no marketplace."],
-                published_item_id=str(publication_result.get("id", "")) or None,
-                published_permalink=publication_result.get("permalink"),
-                publication_reference=publication_result,
-            )
+            try:
+                publication_result = self.publish_product(connector, store, product_payload, project.model_dump())
+            except ValueError as exc:
+                message = str(exc)
+                if connector.marketplace == "mercado_livre" and "invalid access token" in message.lower():
+                    self.invalidate_store_token(store["id"], {"access_token", "refresh_token", "authorization_code"})
+                    blockers.append("Mercado Livre: access_token expirado ou inválido. Autorize a loja novamente para publicar.")
+                else:
+                    blockers.append(message)
+            else:
+                return ProductPublishDraftResponse(
+                    status="published",
+                    store_id=store["id"],
+                    store_name=store["name"],
+                    marketplace=store["marketplace"],
+                    project_id=project_id,
+                    can_publish=True,
+                    blockers=[],
+                    warnings=[
+                        "Revise regras de propriedade intelectual antes de publicar personagens/licenciados.",
+                        "Confirme prazo de produção e estoque antes de ativar anúncio.",
+                    ],
+                    payload=product_payload,
+                    next_steps=["Anúncio publicado. Revise título, fotos e atributos diretamente no marketplace."],
+                    published_item_id=str(publication_result.get("id", "")) or None,
+                    published_permalink=publication_result.get("permalink"),
+                    publication_reference=publication_result,
+                )
 
         return ProductPublishDraftResponse(
             status="blocked" if blockers else "draft_ready",
@@ -479,14 +490,15 @@ class StoreService:
         channels = sales.get("marketplace_attributes") or []
         channel = next((item for item in channels if self.matches_channel(connector.marketplace, item.get("marketplace", ""))), channels[0] if channels else {})
         price = float(request.price_override_brl or sales.get("suggested_price_50_margin_brl") or 0)
-        images = self.resolve_product_images(project, request.image_base_url)
+        images = self.resolve_product_images(project, request.image_base_url, store)
         title = str(channel.get("title") or project.get("name") or "Produto impresso em 3D")
         description = str(channel.get("full_description") or channel.get("description") or "Produto impresso em 3D sob demanda.")
 
         if connector.marketplace == "mercado_livre":
+            category_id = str(store.get("settings", {}).get("category_id", "")).strip() or self.predict_mercado_livre_category_id(store, project, title, channel)
             return {
                 "title": title[:60],
-                "category_id": store.get("settings", {}).get("category_id", ""),
+                "category_id": category_id,
                 "price": round(price, 2),
                 "currency_id": "BRL",
                 "available_quantity": request.stock,
@@ -497,6 +509,7 @@ class StoreService:
                 "description_plain_text": description,
                 "attributes": channel.get("registration_attributes", []),
                 "images": images,
+                "category_prediction_applied": bool(category_id) and not bool(str(store.get("settings", {}).get("category_id", "")).strip()),
             }
         if connector.marketplace == "shopee":
             return {
@@ -537,8 +550,9 @@ class StoreService:
             "download_bundle": next((item.get("path") for item in project.get("bundles", []) if item.get("path")), None),
         }
 
-    def resolve_product_images(self, project: dict[str, Any], image_base_url: str | None) -> list[str]:
+    def resolve_product_images(self, project: dict[str, Any], image_base_url: str | None, store: dict[str, Any] | None = None) -> list[str]:
         raw_paths = [project.get("preview_url")] + [item.get("path") for item in project.get("previews", [])]
+        candidate_bases = self.image_base_url_candidates(image_base_url, store)
         public_paths: list[str] = []
         for raw_path in raw_paths:
             if not raw_path:
@@ -548,9 +562,33 @@ class StoreService:
                 continue
             if path.startswith("http"):
                 public_paths.append(path)
-            elif image_base_url:
-                public_paths.append(f"{image_base_url.rstrip('/')}{path}")
+                continue
+            for base in candidate_bases:
+                public_paths.append(f"{base.rstrip('/')}{path}")
         return list(dict.fromkeys(public_paths))
+
+    def resolve_local_product_images(self, project: dict[str, Any]) -> list[str]:
+        candidate_paths = [item.get("path") for item in project.get("previews", [])]
+        local_paths: list[str] = []
+        for candidate in candidate_paths:
+            if not candidate:
+                continue
+            path = Path(str(candidate))
+            if path.exists() and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}:
+                local_paths.append(str(path))
+        return list(dict.fromkeys(local_paths))
+
+    def image_base_url_candidates(self, request_image_base_url: str | None, store: dict[str, Any] | None) -> list[str]:
+        candidates: list[str] = []
+        if request_image_base_url:
+            candidates.append(request_image_base_url.rstrip("/"))
+        store_settings = store.get("settings", {}) if store else {}
+        if isinstance(store_settings.get("image_base_url"), str) and store_settings.get("image_base_url"):
+            candidates.append(str(store_settings["image_base_url"]).rstrip("/"))
+        if self.settings.public_backend_origin.startswith("https://"):
+            candidates.append(self.settings.public_backend_origin.rstrip("/"))
+        candidates.append("https://api.euachei3d.com.br")
+        return list(dict.fromkeys(candidate for candidate in candidates if candidate))
 
     def next_steps(self, connector: MarketplaceConnector, blockers: list[str]) -> list[str]:
         steps = ["Revise o payload gerado na tela antes de publicar."]
@@ -564,15 +602,21 @@ class StoreService:
         connector: MarketplaceConnector,
         store: dict[str, Any],
         product_payload: dict[str, Any],
+        project: dict[str, Any],
     ) -> dict[str, Any]:
         if connector.marketplace == "mercado_livre":
-            return self.publish_mercado_livre_item(store, product_payload)
+            return self.publish_mercado_livre_item(store, product_payload, project)
         raise ValueError(f"Publicação automática ainda não implementada para {connector.marketplace}.")
 
-    def publish_mercado_livre_item(self, store: dict[str, Any], product_payload: dict[str, Any]) -> dict[str, Any]:
+    def publish_mercado_livre_item(self, store: dict[str, Any], product_payload: dict[str, Any], project: dict[str, Any]) -> dict[str, Any]:
         access_token = str(store.get("credentials", {}).get("access_token", "")).strip()
         if not access_token:
             raise ValueError("Mercado Livre: access_token ausente para publicação.")
+
+        if not product_payload.get("pictures"):
+            local_images = self.resolve_local_product_images(project)
+            if local_images:
+                product_payload["pictures"] = self.upload_local_mercado_livre_pictures(access_token, local_images)
 
         item_payload = {
             key: value
@@ -607,6 +651,53 @@ class StoreService:
             except ValueError:
                 pass
         return created
+
+    def upload_local_mercado_livre_pictures(self, access_token: str, image_paths: list[str]) -> list[dict[str, str]]:
+        uploaded: list[dict[str, str]] = []
+        for image_path in image_paths[:8]:
+            uploaded.append(self.mercado_livre_upload_picture(access_token, image_path))
+        return uploaded
+
+    def mercado_livre_upload_picture(self, access_token: str, image_path: str) -> dict[str, str]:
+        path = Path(image_path)
+        if not path.exists():
+            raise ValueError(f"Arquivo de preview não encontrado para upload: {path}")
+        boundary = f"----SnapMaker3dStudio{uuid4().hex}"
+        mime_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        file_bytes = path.read_bytes()
+        body = b"".join(
+            [
+                f"--{boundary}\r\n".encode("utf-8"),
+                f'Content-Disposition: form-data; name="file"; filename="{path.name}"\r\n'.encode("utf-8"),
+                f"Content-Type: {mime_type}\r\n\r\n".encode("utf-8"),
+                file_bytes,
+                b"\r\n",
+                f"--{boundary}--\r\n".encode("utf-8"),
+            ]
+        )
+        request = Request(
+            "https://api.mercadolibre.com/pictures/items/upload",
+            data=body,
+            method="POST",
+            headers={
+                "accept": "application/json",
+                "authorization": f"Bearer {access_token}",
+                "content-type": f"multipart/form-data; boundary={boundary}",
+            },
+        )
+        try:
+            with urlopen(request, timeout=60) as response:  # noqa: S310
+                payload = json.loads(response.read().decode("utf-8"))
+        except HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise ValueError(f"Falha ao subir preview para o Mercado Livre: HTTP {exc.code}: {detail}") from exc
+        except URLError as exc:
+            raise ValueError(f"Falha de rede ao subir preview para o Mercado Livre: {exc.reason}") from exc
+
+        picture_id = str(payload.get("id", "")).strip()
+        if not picture_id:
+            raise ValueError("Mercado Livre não retornou id da imagem enviada.")
+        return {"id": picture_id}
 
     def mercado_livre_api_request(
         self,
@@ -653,6 +744,47 @@ class StoreService:
             if not product_payload.get("listing_type_id"):
                 blockers.append("Mercado Livre: listing_type_id ausente.")
         return blockers
+
+    def can_upload_images_during_publish(
+        self,
+        connector: MarketplaceConnector,
+        store: dict[str, Any],
+        project: dict[str, Any],
+        payload: ProductPublishRequest,
+    ) -> bool:
+        if payload.mode != "publish" or connector.marketplace != "mercado_livre":
+            return False
+        access_token = str(store.get("credentials", {}).get("access_token", "")).strip()
+        return bool(access_token and self.resolve_local_product_images(project))
+
+    def predict_mercado_livre_category_id(
+        self,
+        store: dict[str, Any],
+        project: dict[str, Any],
+        title: str,
+        channel: dict[str, Any],
+    ) -> str:
+        site_id = str(store.get("settings", {}).get("site_id") or "MLB").strip() or "MLB"
+        queries = [
+            title,
+            str(channel.get("category") or "").strip(),
+            str(project.get("name") or "").strip(),
+        ]
+        for query in queries:
+            if not query:
+                continue
+            url = f"https://api.mercadolibre.com/sites/{site_id}/domain_discovery/search?limit=1&q={quote(query)}"
+            request = Request(url, headers={"accept": "application/json"})
+            try:
+                with urlopen(request, timeout=20) as response:  # noqa: S310
+                    payload = json.loads(response.read().decode("utf-8"))
+            except Exception:  # noqa: BLE001
+                continue
+            if isinstance(payload, list) and payload:
+                category_id = str(payload[0].get("category_id", "")).strip()
+                if category_id:
+                    return category_id
+        return ""
 
     def missing_required_credentials(self, connector: MarketplaceConnector, credentials: dict[str, str]) -> list[str]:
         missing = []
@@ -721,7 +853,44 @@ class StoreService:
     def load_store_records(self) -> list[dict[str, Any]]:
         if not self.data_path.exists():
             return []
-        return json.loads(self.data_path.read_text(encoding="utf-8"))
+        records = json.loads(self.data_path.read_text(encoding="utf-8"))
+        migrated = False
+        for record in records:
+            if record.get("marketplace") != "mercado_livre":
+                continue
+            credentials = record.setdefault("credentials", {})
+            settings = record.setdefault("settings", {})
+            if not credentials.get("seller_id") and settings.get("id"):
+                credentials["seller_id"] = str(settings.get("id"))
+                migrated = True
+        if migrated:
+            self.write_store_records(records)
+        return records
+
+    def invalidate_store_token(self, store_id: str, keys: set[str]) -> None:
+        records = self.load_store_records()
+        changed = False
+        for record in records:
+            if record.get("id") != store_id:
+                continue
+            credentials = record.setdefault("credentials", {})
+            for key in keys:
+                if key in credentials:
+                    credentials.pop(key, None)
+                    changed = True
+            record["updated_at"] = datetime.now(tz=timezone.utc).isoformat()
+        if changed:
+            self.write_store_records(records)
+
+    def store_priority_score(self, store: dict[str, Any]) -> tuple[int, int, int, int, str]:
+        credentials = store.get("credentials", {})
+        settings = store.get("settings", {})
+        status = str(store.get("status", "draft"))
+        has_token = bool(credentials.get("access_token"))
+        has_refresh = bool(credentials.get("refresh_token"))
+        has_seller = bool(credentials.get("seller_id") or settings.get("id"))
+        configured = 1 if status == "configured" else 0
+        return (1 if has_token else 0, 1 if has_refresh else 0, 1 if has_seller else 0, configured, str(store.get("name", "")))
 
     def write_store_records(self, records: list[dict[str, Any]]) -> None:
         self.data_path.write_text(json.dumps(records, indent=2, ensure_ascii=False), encoding="utf-8")
