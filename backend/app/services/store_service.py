@@ -553,7 +553,15 @@ class StoreService:
         }
 
     def resolve_product_images(self, project: dict[str, Any], image_base_url: str | None, store: dict[str, Any] | None = None) -> list[str]:
-        raw_paths = [project.get("preview_url")] + [item.get("path") for item in project.get("previews", [])]
+        previews = list(project.get("previews", []) or [])
+        marketplace_paths = [
+            item.get("path")
+            for item in previews
+            if str(item.get("kind", "")).lower() == "marketplace_preview"
+            or "marketplace_" in str(item.get("label", "")).lower()
+            or "marketplace_" in str(item.get("path", "")).lower()
+        ]
+        raw_paths = marketplace_paths or [project.get("preview_url")] + [item.get("path") for item in previews]
         candidate_bases = self.image_base_url_candidates(image_base_url, store)
         public_paths: list[str] = []
         for raw_path in raw_paths:
@@ -570,7 +578,15 @@ class StoreService:
         return list(dict.fromkeys(public_paths))
 
     def resolve_local_product_images(self, project: dict[str, Any]) -> list[str]:
-        candidate_paths = [item.get("path") for item in project.get("previews", [])]
+        previews = list(project.get("previews", []) or [])
+        marketplace_paths = [
+            item.get("path")
+            for item in previews
+            if str(item.get("kind", "")).lower() == "marketplace_preview"
+            or "marketplace_" in str(item.get("label", "")).lower()
+            or "marketplace_" in str(item.get("path", "")).lower()
+        ]
+        candidate_paths = marketplace_paths or [item.get("path") for item in previews]
         local_paths: list[str] = []
         for candidate in candidate_paths:
             if not candidate:
