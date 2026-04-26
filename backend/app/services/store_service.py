@@ -497,6 +497,7 @@ class StoreService:
         if connector.marketplace == "mercado_livre":
             stored_category_id = str(store.get("settings", {}).get("category_id", "")).strip()
             category_id = stored_category_id if self.looks_like_mercado_livre_category_id(stored_category_id) else self.predict_mercado_livre_category_id(store, project, title, channel)
+            images = self.limit_mercado_livre_images(category_id, images)
             return {
                 "title": title[:60],
                 "category_id": category_id,
@@ -508,7 +509,7 @@ class StoreService:
                 "listing_type_id": store.get("settings", {}).get("listing_type_id", "gold_special"),
                 "pictures": [{"source": image} for image in images],
                 "description_plain_text": description,
-                "attributes": self.normalize_mercado_livre_attributes(channel.get("registration_attributes", [])),
+                "attributes": self.build_mercado_livre_attributes(category_id, project, channel),
                 "images": images,
                 "category_prediction_applied": bool(category_id) and not self.looks_like_mercado_livre_category_id(stored_category_id),
             }
@@ -761,19 +762,69 @@ class StoreService:
     def looks_like_mercado_livre_category_id(self, value: str) -> bool:
         return value.startswith("MLB") and value[3:].isdigit()
 
-    def normalize_mercado_livre_attributes(self, raw_attributes: list[dict[str, Any]] | Any) -> list[dict[str, Any]]:
-        if not isinstance(raw_attributes, list):
+    def build_mercado_livre_attributes(self, category_id: str, project: dict[str, Any], channel: dict[str, Any]) -> list[dict[str, Any]]:
+        if not category_id:
             return []
+        category_attributes = self.fetch_mercado_livre_category_attributes(category_id)
+        by_id = {item.get("id"): item for item in category_attributes if isinstance(item, dict)}
+        required_ids = [
+            item.get("id")
+            for item in category_attributes
+            if isinstance(item, dict) and (item.get("tags", {}).get("required") or item.get("tags", {}).get("catalog_required"))
+        ]
+        material = self.infer_material_name(project)
+        manufacturer = "EuAchei3D"
+        model_name = str(project.get("name") or channel.get("title") or "Modelo 3D")[:255]
+        values_by_id = {
+            "BRAND": "Genérica",
+            "MANUFACTURER": manufacturer,
+            "MODEL": model_name,
+            "MATERIAL": material,
+        }
         normalized: list[dict[str, Any]] = []
-        for item in raw_attributes:
-            if not isinstance(item, dict):
+        for attribute_id in required_ids:
+            attribute = by_id.get(attribute_id) or {}
+            value_name = str(values_by_id.get(attribute_id, "")).strip()
+            if not value_name:
                 continue
-            label = str(item.get("label") or item.get("name") or "").strip()
-            value = str(item.get("value") or item.get("value_name") or "").strip()
-            if not label or not value:
-                continue
-            normalized.append({"name": label, "value_name": value[:255]})
+            normalized.append({"id": attribute_id, "name": str(attribute.get("name") or attribute_id), "value_name": value_name[:255]})
         return normalized
+
+    def infer_material_name(self, project: dict[str, Any]) -> str:
+        sales = project.get("sales_profile") or {}
+        for assumption in sales.get("assumptions", []):
+            text = str(assumption)
+            if "Material assumido:" in text:
+                return text.split("Material assumido:", 1)[1].split(".", 1)[0].strip() or "PLA"
+        return "PLA"
+
+    def fetch_mercado_livre_category_attributes(self, category_id: str) -> list[dict[str, Any]]:
+        request = Request(f"https://api.mercadolibre.com/categories/{category_id}/attributes", headers={"accept": "application/json"})
+        try:
+            with urlopen(request, timeout=20) as response:  # noqa: S310
+                payload = json.loads(response.read().decode("utf-8"))
+        except Exception:  # noqa: BLE001
+            return []
+        return payload if isinstance(payload, list) else []
+
+    def limit_mercado_livre_images(self, category_id: str, images: list[str]) -> list[str]:
+        max_pictures = self.fetch_mercado_livre_max_pictures(category_id)
+        if max_pictures <= 0:
+            max_pictures = 12
+        return images[:max_pictures]
+
+    def fetch_mercado_livre_max_pictures(self, category_id: str) -> int:
+        if not category_id:
+            return 12
+        request = Request(f"https://api.mercadolibre.com/categories/{category_id}", headers={"accept": "application/json"})
+        try:
+            with urlopen(request, timeout=20) as response:  # noqa: S310
+                payload = json.loads(response.read().decode("utf-8"))
+        except Exception:  # noqa: BLE001
+            return 12
+        settings = payload.get("settings", {}) if isinstance(payload, dict) else {}
+        value = settings.get("max_pictures_per_item")
+        return int(value) if isinstance(value, int) else 12
 
     def predict_mercado_livre_category_id(
         self,
@@ -783,11 +834,7 @@ class StoreService:
         channel: dict[str, Any],
     ) -> str:
         site_id = str(store.get("settings", {}).get("site_id") or "MLB").strip() or "MLB"
-        queries = [
-            title,
-            str(channel.get("category") or "").strip(),
-            str(project.get("name") or "").strip(),
-        ]
+        queries = self.build_mercado_livre_prediction_queries(project, title, channel)
         for query in queries:
             if not query:
                 continue
@@ -803,6 +850,36 @@ class StoreService:
                 if category_id:
                     return category_id
         return ""
+
+    def build_mercado_livre_prediction_queries(self, project: dict[str, Any], title: str, channel: dict[str, Any]) -> list[str]:
+        project_name = str(project.get("name") or "").strip()
+        sales = project.get("sales_profile") or {}
+        marketplace_category = str(channel.get("category") or "").strip().lower()
+        lowered = " ".join(part for part in [title.lower(), project_name.lower(), marketplace_category] if part)
+        queries = [title, project_name, str(channel.get("category") or "").strip()]
+        if any(term in lowered for term in ["parrot", "papagaio", "bird", "pássaro", "passaro", "decorativo", "estatueta", "animal"]):
+            queries = [
+                f"{project_name or title} decorativo impresso em 3d",
+                f"figura decorativa {project_name or title}",
+                f"estatueta decorativa {project_name or title}",
+                *queries,
+            ]
+        elif "chaveiro" in lowered or "porta chaves" in lowered or "keychain" in lowered:
+            queries = [
+                f"{project_name or title} chaveiro impresso em 3d",
+                "chaveiro impresso em 3d",
+                *queries,
+            ]
+        elif "máscara" in lowered or "mascara" in lowered or "helmet" in lowered or "capacete" in lowered:
+            queries = [
+                f"{project_name or title} decoração cosplay",
+                f"máscara decorativa {project_name or title}",
+                *queries,
+            ]
+        assumptions = sales.get("assumptions", [])
+        if any("Chaveiro / brinde pequeno" in str(item) for item in assumptions):
+            queries.insert(0, "chaveiro impresso em 3d")
+        return [query for idx, query in enumerate(queries) if query and query not in queries[:idx]]
 
     def missing_required_credentials(self, connector: MarketplaceConnector, credentials: dict[str, str]) -> list[str]:
         missing = []
