@@ -152,6 +152,23 @@ async def build_publication_draft(
     return result
 
 
+@router.post("/{store_id}/items/{item_id}/refresh-media/{project_id}")
+async def refresh_listing_media(
+    store_id: str,
+    item_id: str,
+    project_id: str,
+    current_user: AuthUser = Depends(require_permission("stores.publish")),
+    service: StoreService = Depends(get_store_service),
+) -> dict[str, object]:
+    try:
+        result = service.refresh_listing_media(current_user, store_id, project_id, item_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="Loja ou projeto nao encontrado.")
+    return result
+
+
 def build_oauth_callback_html(title: str, message: str, success: bool) -> str:
     color = "#13795b" if success else "#c54237"
     frontend_origin = get_settings().public_frontend_origin.rstrip("/")

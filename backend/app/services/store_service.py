@@ -479,6 +479,53 @@ class StoreService:
             next_steps=self.next_steps(connector, blockers),
         )
 
+    def refresh_listing_media(
+        self,
+        user: AuthUser,
+        store_id: str,
+        project_id: str,
+        item_id: str,
+    ) -> dict[str, Any] | None:
+        store = next((item for item in self.load_store_records() if item.get("id") == store_id and item.get("owner_username") == user.username), None)
+        if store is None:
+            return None
+        project = ProjectService().get_project(project_id)
+        if project is None:
+            return None
+
+        connector = self.get_connector(store["marketplace"])
+        if connector.marketplace != "mercado_livre":
+            raise ValueError("Atualização de fotos publicada só está implementada para Mercado Livre.")
+
+        product_payload = self.build_payload_for_marketplace(
+            connector,
+            store,
+            project.model_dump(),
+            ProductPublishRequest(mode="draft", stock=1),
+        )
+        pictures = list(product_payload.get("pictures") or [])
+        if not pictures:
+            raise ValueError("Nenhuma imagem tratada foi encontrada para atualizar o anúncio.")
+
+        access_token = str(store.get("credentials", {}).get("access_token", "")).strip()
+        if not access_token:
+            raise ValueError("Mercado Livre: access_token ausente para atualização de fotos.")
+
+        updated = self.mercado_livre_api_request(
+            access_token=access_token,
+            method="PUT",
+            path=f"/items/{item_id}",
+            payload={"pictures": pictures},
+        )
+        return {
+            "status": "updated",
+            "item_id": item_id,
+            "permalink": updated.get("permalink"),
+            "pictures_count": len(pictures),
+            "pictures": pictures,
+            "reference": updated,
+        }
+
     def build_payload_for_marketplace(
         self,
         connector: MarketplaceConnector,

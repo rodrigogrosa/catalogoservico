@@ -50,3 +50,58 @@ def test_mercado_livre_validate_item_rejects_real_validation_errors(monkeypatch:
 
     with pytest.raises(ValueError, match="Mercado Livre API /items/validate falhou"):
         StoreService().mercado_livre_validate_item("token", {"title": "Produto"})
+
+
+def test_refresh_listing_media_replaces_listing_pictures(monkeypatch: pytest.MonkeyPatch) -> None:
+    service = StoreService()
+    user = type("User", (), {"username": "rodrigogrosa"})()
+    fake_store = {
+        "id": "store-1",
+        "owner_username": "rodrigogrosa",
+        "marketplace": "mercado_livre",
+        "credentials": {"access_token": "token"},
+        "settings": {},
+    }
+    fake_project = type(
+        "Project",
+        (),
+        {
+            "model_dump": lambda self=None: {
+                "id": "project-1",
+                "name": "Produto",
+                "preview_url": "/storage/p/previews/marketplace_01.jpg",
+                "previews": [
+                    {"label": "marketplace_01.jpg", "path": "/storage/p/previews/marketplace_01.jpg", "kind": "marketplace_preview"},
+                    {"label": "marketplace_02.jpg", "path": "/storage/p/previews/marketplace_02.jpg", "kind": "marketplace_preview"},
+                ],
+                "sales_profile": {"suggested_price_50_margin_brl": 10, "marketplace_attributes": [{"marketplace": "Mercado Livre", "title": "Produto", "full_description": "Desc"}]},
+            }
+        },
+    )()
+
+    monkeypatch.setattr(service, "load_store_records", lambda: [fake_store])
+    monkeypatch.setattr(store_service_module, "ProjectService", lambda: type("PS", (), {"get_project": lambda self, project_id: fake_project})())
+    monkeypatch.setattr(service, "build_mercado_livre_attributes", lambda *args, **kwargs: [])
+
+    captured: dict[str, object] = {}
+
+    def fake_request(*, access_token: str, method: str, path: str, payload: dict[str, object] | None = None):
+        captured["access_token"] = access_token
+        captured["method"] = method
+        captured["path"] = path
+        captured["payload"] = payload
+        return {"id": "MLB123", "permalink": "https://example.com/item"}
+
+    monkeypatch.setattr(service, "mercado_livre_api_request", fake_request)
+
+    result = service.refresh_listing_media(user, "store-1", "project-1", "MLB123")
+
+    assert result["status"] == "updated"
+    assert captured["method"] == "PUT"
+    assert captured["path"] == "/items/MLB123"
+    assert captured["payload"] == {
+        "pictures": [
+            {"source": "https://api.euachei3d.com.br/storage/p/previews/marketplace_01.jpg"},
+            {"source": "https://api.euachei3d.com.br/storage/p/previews/marketplace_02.jpg"},
+        ]
+    }
