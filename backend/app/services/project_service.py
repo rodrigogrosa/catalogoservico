@@ -865,6 +865,7 @@ class ProjectService:
                 previews_dir,
                 self.settings.storage_root,
                 files,
+                None,
                 force=True,
             )
         )
@@ -899,11 +900,13 @@ class ProjectService:
                         self.preview_service.extract_preview_assets(file_path, previews_dir, self.settings.storage_root, file_path.stem)
                     )
         source_files = [Path(file_info["path"]) for file_info in manifest.get("input_files", []) if file_info.get("path")]
+        dimensions_mm = self.preview_dimensions_from_manifest(manifest)
         preview_assets.extend(
             self.preview_service.generate_marketplace_ready_assets(
                 previews_dir,
                 self.settings.storage_root,
                 source_files,
+                dimensions_mm,
                 force=extract_missing,
             )
         )
@@ -927,6 +930,7 @@ class ProjectService:
         project_root = Path(manifest["storage_path"])
         previews_dir = project_root / "previews"
         source_files = [Path(file_info["path"]) for file_info in manifest.get("input_files", []) if file_info.get("path")]
+        dimensions_mm = self.preview_dimensions_from_manifest(manifest)
         preview_assets = self.preview_service.collect_existing_previews(previews_dir, self.settings.storage_root)
         if not preview_assets:
             for file_path in source_files:
@@ -939,6 +943,7 @@ class ProjectService:
                 previews_dir,
                 self.settings.storage_root,
                 source_files,
+                dimensions_mm,
                 force=True,
             )
         )
@@ -946,6 +951,19 @@ class ProjectService:
         self.ensure_preview_fields(manifest, persist=True, extract_missing=False)
         project = self.get_project(project_id)
         return project
+
+    def preview_dimensions_from_manifest(self, manifest: dict[str, Any]) -> tuple[float, float, float] | None:
+        mesh_metrics = manifest.get("metadata", {}).get("mesh_metrics", {})
+        extents = mesh_metrics.get("extents_mm_assumed")
+        if not isinstance(extents, list) or len(extents) < 3:
+            return None
+        try:
+            values = tuple(round(float(value), 1) for value in extents[:3])
+        except (TypeError, ValueError):
+            return None
+        if len(values) == 3 and all(value > 0 for value in values):
+            return values
+        return None
 
     def ensure_sales_profile(self, manifest: dict[str, Any], *, persist: bool, allow_llm: bool = True) -> None:
         profile = manifest.get("sales_profile")

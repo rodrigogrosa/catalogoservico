@@ -82,6 +82,7 @@ class PreviewService:
         previews_dir: Path,
         storage_root: Path,
         source_files: list[Path] | None = None,
+        dimensions_mm: tuple[float, float, float] | None = None,
         *,
         force: bool = False,
     ) -> list[dict[str, str]]:
@@ -112,7 +113,7 @@ class PreviewService:
             preferred_kind="clean_render",
             preferred_family="top",
         )
-        dimensions_mm = self.infer_dimensions_mm(source_files or [])
+        dimensions_mm = dimensions_mm or self.infer_dimensions_mm(source_files or [])
 
         self.clear_generated_marketplace_assets(previews_dir)
         generated: list[dict[str, str]] = []
