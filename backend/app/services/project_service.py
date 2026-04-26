@@ -429,7 +429,7 @@ class ProjectService:
         summaries: list[ProjectSummary] = []
         for manifest in manifests:
             try:
-                self.ensure_preview_fields(manifest, persist=True)
+                self.ensure_preview_fields(manifest, persist=True, generate_marketplace=False)
                 self.ensure_sales_profile(manifest, persist=True, allow_llm=False)
                 summaries.append(ProjectSummary(**manifest))
             except Exception:
@@ -448,7 +448,7 @@ class ProjectService:
         manifest = self.storage.load_manifest(project_id)
         if manifest is None:
             return None
-        self.ensure_preview_fields(manifest, persist=True, extract_missing=True)
+        self.ensure_preview_fields(manifest, persist=True, extract_missing=True, generate_marketplace=False)
         self.ensure_sales_profile(manifest, persist=True, allow_llm=True)
         manifest_path = Path(manifest["storage_path"]) / "project_manifest.json"
         if manifest_path.exists():
@@ -886,6 +886,7 @@ class ProjectService:
         *,
         persist: bool,
         extract_missing: bool = False,
+        generate_marketplace: bool = True,
     ) -> None:
         project_root = Path(manifest["storage_path"])
         previews_dir = project_root / "previews"
@@ -901,15 +902,16 @@ class ProjectService:
                     )
         source_files = [Path(file_info["path"]) for file_info in manifest.get("input_files", []) if file_info.get("path")]
         dimensions_mm = self.preview_dimensions_from_manifest(manifest)
-        preview_assets.extend(
-            self.preview_service.generate_marketplace_ready_assets(
-                previews_dir,
-                self.settings.storage_root,
-                source_files,
-                dimensions_mm,
-                force=extract_missing,
+        if generate_marketplace:
+            preview_assets.extend(
+                self.preview_service.generate_marketplace_ready_assets(
+                    previews_dir,
+                    self.settings.storage_root,
+                    source_files,
+                    dimensions_mm,
+                    force=extract_missing,
+                )
             )
-        )
         if preview_assets:
             manifest["previews"] = list({f"{item['label']}::{item['path']}": item for item in preview_assets}.values())
         source_file = None
@@ -948,9 +950,12 @@ class ProjectService:
             )
         )
         manifest["previews"] = list({f"{item['label']}::{item['path']}": item for item in preview_assets}.values())
-        self.ensure_preview_fields(manifest, persist=True, extract_missing=False)
-        project = self.get_project(project_id)
-        return project
+        self.ensure_preview_fields(manifest, persist=True, extract_missing=False, generate_marketplace=False)
+        self.ensure_sales_profile(manifest, persist=True, allow_llm=True)
+        manifest_path = Path(manifest["storage_path"]) / "project_manifest.json"
+        if manifest_path.exists():
+            manifest["manifest"] = self.storage.read_json(manifest_path)
+        return ProjectDetailResponse(**manifest)
 
     def preview_dimensions_from_manifest(self, manifest: dict[str, Any]) -> tuple[float, float, float] | None:
         mesh_metrics = manifest.get("metadata", {}).get("mesh_metrics", {})
