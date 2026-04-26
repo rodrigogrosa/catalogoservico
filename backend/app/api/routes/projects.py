@@ -120,6 +120,19 @@ async def process_project(
     return ProjectSummary(**current)
 
 
+@router.post("/{project_id}/refresh-previews", response_model=ProjectDetailResponse)
+async def refresh_project_previews(
+    project_id: str,
+    service: ProjectService = Depends(get_project_service),
+    current_user: AuthUser = Depends(require_permission("projects.process")),
+) -> ProjectDetailResponse:
+    logger.info("project_refresh_previews_requested", extra={"username": current_user.username, "project_id": project_id})
+    project = service.refresh_previews(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Projeto nao encontrado.")
+    return project
+
+
 @router.get("/{project_id}/bundle", response_model=ProjectBundleResponse)
 async def build_project_bundle(
     project_id: str,

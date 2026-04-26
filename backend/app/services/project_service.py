@@ -860,7 +860,14 @@ class ProjectService:
             preview_assets.extend(
                 self.preview_service.extract_preview_assets(file_path, previews_dir, self.settings.storage_root, file_path.stem)
             )
-        preview_assets.extend(self.preview_service.generate_marketplace_ready_assets(previews_dir, self.settings.storage_root, files))
+        preview_assets.extend(
+            self.preview_service.generate_marketplace_ready_assets(
+                previews_dir,
+                self.settings.storage_root,
+                files,
+                force=True,
+            )
+        )
         deduped = {f"{item['label']}::{item['path']}": item for item in preview_assets}
         return list(deduped.values())
 
@@ -892,7 +899,14 @@ class ProjectService:
                         self.preview_service.extract_preview_assets(file_path, previews_dir, self.settings.storage_root, file_path.stem)
                     )
         source_files = [Path(file_info["path"]) for file_info in manifest.get("input_files", []) if file_info.get("path")]
-        preview_assets.extend(self.preview_service.generate_marketplace_ready_assets(previews_dir, self.settings.storage_root, source_files))
+        preview_assets.extend(
+            self.preview_service.generate_marketplace_ready_assets(
+                previews_dir,
+                self.settings.storage_root,
+                source_files,
+                force=extract_missing,
+            )
+        )
         if preview_assets:
             manifest["previews"] = list({f"{item['label']}::{item['path']}": item for item in preview_assets}.values())
         source_file = None
@@ -905,6 +919,33 @@ class ProjectService:
         manifest["preview_url"] = self.resolve_preview_url(manifest.get("previews"), source_file)
         if persist:
             self.storage.save_manifest(manifest)
+
+    def refresh_previews(self, project_id: str) -> ProjectDetailResponse | None:
+        manifest = self.storage.load_manifest(project_id)
+        if manifest is None:
+            return None
+        project_root = Path(manifest["storage_path"])
+        previews_dir = project_root / "previews"
+        source_files = [Path(file_info["path"]) for file_info in manifest.get("input_files", []) if file_info.get("path")]
+        preview_assets = self.preview_service.collect_existing_previews(previews_dir, self.settings.storage_root)
+        if not preview_assets:
+            for file_path in source_files:
+                if file_path.exists():
+                    preview_assets.extend(
+                        self.preview_service.extract_preview_assets(file_path, previews_dir, self.settings.storage_root, file_path.stem)
+                    )
+        preview_assets.extend(
+            self.preview_service.generate_marketplace_ready_assets(
+                previews_dir,
+                self.settings.storage_root,
+                source_files,
+                force=True,
+            )
+        )
+        manifest["previews"] = list({f"{item['label']}::{item['path']}": item for item in preview_assets}.values())
+        self.ensure_preview_fields(manifest, persist=True, extract_missing=False)
+        project = self.get_project(project_id)
+        return project
 
     def ensure_sales_profile(self, manifest: dict[str, Any], *, persist: bool, allow_llm: bool = True) -> None:
         profile = manifest.get("sales_profile")

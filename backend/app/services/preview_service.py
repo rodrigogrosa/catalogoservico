@@ -82,12 +82,21 @@ class PreviewService:
         previews_dir: Path,
         storage_root: Path,
         source_files: list[Path] | None = None,
+        *,
+        force: bool = False,
     ) -> list[dict[str, str]]:
         if not previews_dir.exists():
             return []
+        existing_marketplace_assets = [
+            self._artifact(file_path, storage_root, kind="marketplace_preview")
+            for file_path in sorted(previews_dir.glob(f"{self.MARKETPLACE_LABEL_PREFIX}*.jpg"))
+            if file_path.is_file()
+        ]
+        if existing_marketplace_assets and not force:
+            return existing_marketplace_assets
         source_candidates = [path for path in sorted(previews_dir.iterdir()) if self.is_marketplace_source_candidate(path)]
         if not source_candidates:
-            return []
+            return existing_marketplace_assets
 
         analyses = self.analyze_marketplace_candidates(source_candidates)
         clean_render = self.select_best_analysis(
