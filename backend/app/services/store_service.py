@@ -627,12 +627,7 @@ class StoreService:
         }
         item_payload["sale_terms"] = store.get("settings", {}).get("sale_terms", [])
 
-        self.mercado_livre_api_request(
-            access_token=access_token,
-            method="POST",
-            path="/items/validate",
-            payload=item_payload,
-        )
+        self.mercado_livre_validate_item(access_token, item_payload)
 
         created = self.mercado_livre_api_request(
             access_token=access_token,
@@ -700,6 +695,45 @@ class StoreService:
         if not picture_id:
             raise ValueError("Mercado Livre não retornou id da imagem enviada.")
         return {"id": picture_id}
+
+    def mercado_livre_validate_item(self, access_token: str, payload: dict[str, Any]) -> dict[str, Any]:
+        request = Request(
+            "https://api.mercadolibre.com/items/validate",
+            data=json.dumps(payload).encode("utf-8"),
+            method="POST",
+            headers={
+                "accept": "application/json",
+                "content-type": "application/json",
+                "authorization": f"Bearer {access_token}",
+            },
+        )
+        try:
+            with urlopen(request, timeout=30) as response:  # noqa: S310
+                body = response.read().decode("utf-8")
+                return json.loads(body) if body else {}
+        except HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            parsed = self.parse_mercado_livre_error_payload(detail)
+            if self.is_warning_only_mercado_livre_validation_error(parsed):
+                return parsed
+            raise ValueError(f"Mercado Livre API /items/validate falhou: HTTP {exc.code}: {detail}") from exc
+        except URLError as exc:
+            raise ValueError(f"Falha de rede ao publicar no Mercado Livre: {exc.reason}") from exc
+
+    def parse_mercado_livre_error_payload(self, detail: str) -> dict[str, Any]:
+        try:
+            parsed = json.loads(detail)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+    def is_warning_only_mercado_livre_validation_error(self, payload: dict[str, Any]) -> bool:
+        if payload.get("error") != "validation_error":
+            return False
+        causes = payload.get("cause")
+        if not isinstance(causes, list) or not causes:
+            return False
+        return all(isinstance(cause, dict) and str(cause.get("type", "")).lower() == "warning" for cause in causes)
 
     def mercado_livre_api_request(
         self,
