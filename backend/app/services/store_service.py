@@ -495,7 +495,8 @@ class StoreService:
         description = str(channel.get("full_description") or channel.get("description") or "Produto impresso em 3D sob demanda.")
 
         if connector.marketplace == "mercado_livre":
-            category_id = str(store.get("settings", {}).get("category_id", "")).strip() or self.predict_mercado_livre_category_id(store, project, title, channel)
+            stored_category_id = str(store.get("settings", {}).get("category_id", "")).strip()
+            category_id = stored_category_id if self.looks_like_mercado_livre_category_id(stored_category_id) else self.predict_mercado_livre_category_id(store, project, title, channel)
             return {
                 "title": title[:60],
                 "category_id": category_id,
@@ -507,9 +508,9 @@ class StoreService:
                 "listing_type_id": store.get("settings", {}).get("listing_type_id", "gold_special"),
                 "pictures": [{"source": image} for image in images],
                 "description_plain_text": description,
-                "attributes": channel.get("registration_attributes", []),
+                "attributes": self.normalize_mercado_livre_attributes(channel.get("registration_attributes", [])),
                 "images": images,
-                "category_prediction_applied": bool(category_id) and not bool(str(store.get("settings", {}).get("category_id", "")).strip()),
+                "category_prediction_applied": bool(category_id) and not self.looks_like_mercado_livre_category_id(stored_category_id),
             }
         if connector.marketplace == "shopee":
             return {
@@ -756,6 +757,23 @@ class StoreService:
             return False
         access_token = str(store.get("credentials", {}).get("access_token", "")).strip()
         return bool(access_token and self.resolve_local_product_images(project))
+
+    def looks_like_mercado_livre_category_id(self, value: str) -> bool:
+        return value.startswith("MLB") and value[3:].isdigit()
+
+    def normalize_mercado_livre_attributes(self, raw_attributes: list[dict[str, Any]] | Any) -> list[dict[str, Any]]:
+        if not isinstance(raw_attributes, list):
+            return []
+        normalized: list[dict[str, Any]] = []
+        for item in raw_attributes:
+            if not isinstance(item, dict):
+                continue
+            label = str(item.get("label") or item.get("name") or "").strip()
+            value = str(item.get("value") or item.get("value_name") or "").strip()
+            if not label or not value:
+                continue
+            normalized.append({"name": label, "value_name": value[:255]})
+        return normalized
 
     def predict_mercado_livre_category_id(
         self,
