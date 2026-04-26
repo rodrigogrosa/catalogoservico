@@ -860,7 +860,7 @@ class ProjectService:
             preview_assets.extend(
                 self.preview_service.extract_preview_assets(file_path, previews_dir, self.settings.storage_root, file_path.stem)
             )
-        preview_assets.extend(self.preview_service.generate_marketplace_ready_assets(previews_dir, self.settings.storage_root))
+        preview_assets.extend(self.preview_service.generate_marketplace_ready_assets(previews_dir, self.settings.storage_root, files))
         deduped = {f"{item['label']}::{item['path']}": item for item in preview_assets}
         return list(deduped.values())
 
@@ -891,7 +891,8 @@ class ProjectService:
                     preview_assets.extend(
                         self.preview_service.extract_preview_assets(file_path, previews_dir, self.settings.storage_root, file_path.stem)
                     )
-        preview_assets.extend(self.preview_service.generate_marketplace_ready_assets(previews_dir, self.settings.storage_root))
+        source_files = [Path(file_info["path"]) for file_info in manifest.get("input_files", []) if file_info.get("path")]
+        preview_assets.extend(self.preview_service.generate_marketplace_ready_assets(previews_dir, self.settings.storage_root, source_files))
         if preview_assets:
             manifest["previews"] = list({f"{item['label']}::{item['path']}": item for item in preview_assets}.values())
         source_file = None
