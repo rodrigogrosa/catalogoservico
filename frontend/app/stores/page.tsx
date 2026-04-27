@@ -3,6 +3,8 @@
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 
 import { AppShell } from "@/components/app-shell";
+import { useAuth } from "@/components/auth-provider";
+import { AccessDeniedPanel, PermissionGate } from "@/components/permission-gate";
 import {
   buildPublicationDraft,
   createStore,
@@ -18,6 +20,7 @@ import {
   type ProjectSummary,
   type StoreIntegration,
 } from "@/lib/api";
+import { PERMISSIONS } from "@/lib/permissions";
 
 const marketplaceOptions: { code: MarketplaceCode; label: string }[] = [
   { code: "mercado_livre", label: "Mercado Livre" },
@@ -27,6 +30,7 @@ const marketplaceOptions: { code: MarketplaceCode; label: string }[] = [
 ];
 
 export default function StoresPage() {
+  const { can } = useAuth();
   const [connectors, setConnectors] = useState<MarketplaceConnector[]>([]);
   const [stores, setStores] = useState<StoreIntegration[]>([]);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
@@ -155,10 +159,16 @@ export default function StoresPage() {
       title="Canais de venda e integrações"
       subtitle="Conecte marketplaces, contas e payloads de publicação em uma área comercial pensada para operação diária."
     >
+      {!can(PERMISSIONS.storesView) ? (
+        <div className="portal-stack">
+          <AccessDeniedPanel description="Seu perfil não possui acesso à configuração de lojas e marketplaces." />
+        </div>
+      ) : (
       <div className="portal-stack">
         {error ? <p className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-base text-red-700">{error}</p> : null}
         {status ? <p className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-base text-emerald-800">{status}</p> : null}
 
+        <PermissionGate permission={PERMISSIONS.storesManage}>
         <form onSubmit={handleCreateStore} className="border-b border-slate-900/10 py-8">
             <p className="section-kicker">Cadastro</p>
             <h2 className="mt-2 text-3xl font-semibold text-slate-950">Cadastrar loja do usuário logado</h2>
@@ -262,6 +272,7 @@ export default function StoresPage() {
               Cadastrar loja
             </button>
         </form>
+        </PermissionGate>
 
         <section className="border-b border-slate-900/10 py-8">
             <p className="section-kicker">Como integra</p>
@@ -394,6 +405,7 @@ export default function StoresPage() {
           ) : null}
         </section>
       </div>
+      )}
     </AppShell>
   );
 }

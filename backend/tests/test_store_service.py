@@ -5,7 +5,6 @@ from urllib.error import HTTPError
 
 import pytest
 
-sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 import app.services.store_service as store_service_module
 from app.services.store_service import StoreService

@@ -1,13 +1,16 @@
 "use client";
 
 export async function downloadUrlToUser(url: string, filename: string): Promise<void> {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error("download_failed");
+  try {
+    const response = await fetch(url, { credentials: "include" });
+    if (!response.ok) {
+      throw new Error("download_failed");
+    }
+    const blob = await response.blob();
+    await saveBlobToUser(blob, filename);
+  } catch {
+    directDownload(url, filename);
   }
-
-  const blob = await response.blob();
-  await saveBlobToUser(blob, filename);
 }
 
 async function saveBlobToUser(blob: Blob, filename: string): Promise<void> {
@@ -42,6 +45,17 @@ async function saveBlobToUser(blob: Blob, filename: string): Promise<void> {
   link.click();
   link.remove();
   URL.revokeObjectURL(objectUrl);
+}
+
+function directDownload(url: string, filename: string): void {
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
 }
 
 declare global {

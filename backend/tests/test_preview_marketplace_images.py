@@ -3,9 +3,9 @@ import sys
 
 from PIL import Image, ImageDraw
 
-sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.services.preview_service import PreviewService
+from app.services.project_service import ProjectService
 from app.services.store_service import StoreService
 
 
@@ -48,3 +48,60 @@ def test_store_service_prefers_marketplace_preview_images() -> None:
     public = StoreService().resolve_product_images(project, None, store)
 
     assert public == ["https://api.euachei3d.com.br/storage/project/previews/marketplace_01.jpg"]
+
+
+def test_infer_dimensions_does_not_parse_3mf_with_trimesh(monkeypatch, tmp_path: Path) -> None:
+    service = PreviewService()
+    project_3mf = tmp_path / "sample.3mf"
+    project_3mf.write_bytes(b"placeholder")
+
+    called = {"value": False}
+
+    def fake_load(*_args, **_kwargs):
+        called["value"] = True
+        raise AssertionError("trimesh.load nao deveria ser chamado para 3mf no caminho de preview")
+
+    monkeypatch.setattr("app.services.preview_service.trimesh.load", fake_load)
+
+    dimensions = service.infer_dimensions_mm([project_3mf])
+
+    assert dimensions is None
+    assert called["value"] is False
+
+
+def test_infer_dimensions_skips_large_mesh_files(monkeypatch, tmp_path: Path) -> None:
+    service = PreviewService()
+    big_stl = tmp_path / "huge.stl"
+    big_stl.write_bytes(b"x" * (service.MAX_DIMENSION_INFER_FILE_BYTES + 1))
+
+    called = {"value": False}
+
+    def fake_load(*_args, **_kwargs):
+        called["value"] = True
+        raise AssertionError("trimesh.load nao deveria ser chamado para arquivo grande no caminho de preview")
+
+    monkeypatch.setattr("app.services.preview_service.trimesh.load", fake_load)
+
+    dimensions = service.infer_dimensions_mm([big_stl])
+
+    assert dimensions is None
+    assert called["value"] is False
+
+
+def test_collect_previews_does_not_generate_marketplace_assets_synchronously(monkeypatch, tmp_path: Path) -> None:
+    previews_dir = tmp_path / "previews"
+    previews_dir.mkdir()
+    source = tmp_path / "sample.3mf"
+    source.write_bytes(b"not-a-valid-3mf")
+
+    service = ProjectService()
+    called = {"value": False}
+
+    def fail_if_called(*_args, **_kwargs):
+        called["value"] = True
+        raise AssertionError("generate_marketplace_ready_assets nao deve rodar no caminho síncrono de upload")
+
+    monkeypatch.setattr(service.preview_service, "generate_marketplace_ready_assets", fail_if_called)
+    service.collect_previews([source], previews_dir)
+
+    assert called["value"] is False

@@ -1,7 +1,6 @@
 from pathlib import Path
 import sys
 
-sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.core.config import get_settings
 from app.schemas.knowledge import SlicerIncidentCreate

@@ -14,10 +14,10 @@ services:
       OLLAMA_ENABLED: "true"
       OLLAMA_BASE_URL: http://host.docker.internal:11434
       OLLAMA_MODEL: qwen2.5:7b
-      MASTER_USERNAME: rodrigogrosa
-      MASTER_PASSWORD: Violao2021@
-      MASTER_PASSWORD_ALIASES: Vilao2021@
-      AUTH_TOKEN_SECRET: snapmaker3d-local-docker-secret
+      MASTER_USERNAME: ${MASTER_USERNAME:-admin}
+      MASTER_PASSWORD: ${MASTER_PASSWORD:?MASTER_PASSWORD is required — set it in your .env file}
+      MASTER_PASSWORD_ALIASES: ${MASTER_PASSWORD_ALIASES:-}
+      AUTH_TOKEN_SECRET: ${AUTH_TOKEN_SECRET:?AUTH_TOKEN_SECRET is required — set it in your .env file}
       AUTH_TOKEN_TTL_HOURS: 12
     volumes:
       - ${HOME}/Downloads/Projetos3d/SnapMaker3d:/data/SnapMaker3d

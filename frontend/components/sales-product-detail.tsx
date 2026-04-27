@@ -552,6 +552,8 @@ type AdPhoto = {
   filename: string;
 };
 
+const MAX_AD_PHOTOS = 5;
+
 function PhotoDownloadPanel({ photos, projectName }: { photos: AdPhoto[]; projectName: string }) {
   const [status, setStatus] = useState<string | null>(null);
 
@@ -779,20 +781,67 @@ function ArtifactPanel({ title, items }: { title: string; items: ArtifactReferen
 }
 
 function collectAdPhotos(project: ProjectDetail): AdPhoto[] {
-  const photos = new Map<string, AdPhoto>();
+  const raw: Array<{ label: string; href: string; filename: string; score: number; signature: string }> = [];
   const addPhoto = (label: string, path?: string | null) => {
     const href = fileUrl(path);
     if (!href || !/\.(png|jpe?g|webp)(\?.*)?$/i.test(href)) return;
-    photos.set(href, {
+    raw.push({
       label,
       href,
       filename: `${safeFileName(project.name)}_${safeFileName(label)}.${extensionFromUrl(href)}`,
+      score: adPhotoScore(label, href),
+      signature: normalizePhotoSignature(label, href),
     });
   };
 
   addPhoto("imagem-principal", project.preview_url);
   project.previews.forEach((item) => addPhoto(item.label, item.path));
-  return Array.from(photos.values());
+  const dedupedByHref = new Map<string, { label: string; href: string; filename: string; score: number; signature: string }>();
+  raw.forEach((photo) => {
+    const current = dedupedByHref.get(photo.href);
+    if (!current || photo.score > current.score) dedupedByHref.set(photo.href, photo);
+  });
+  const ordered = Array.from(dedupedByHref.values()).sort((a, b) => b.score - a.score);
+  const selected: AdPhoto[] = [];
+  const seenSignatures = new Set<string>();
+  for (const photo of ordered) {
+    if (seenSignatures.has(photo.signature)) continue;
+    seenSignatures.add(photo.signature);
+    selected.push({ label: photo.label, href: photo.href, filename: photo.filename });
+    if (selected.length >= MAX_AD_PHOTOS) break;
+  }
+  return selected;
+}
+
+function adPhotoScore(label: string, href: string): number {
+  const value = `${label} ${href}`.toLowerCase();
+  let score = 0;
+  if (value.includes("marketplace_01")) score += 120;
+  if (value.includes("marketplace_02")) score += 100;
+  if (value.includes("marketplace_03")) score += 90;
+  if (value.includes("marketplace")) score += 70;
+  if (value.includes("hero")) score += 35;
+  if (value.includes("lifestyle")) score += 30;
+  if (value.includes("dimensions")) score += 20;
+  if (value.includes("snapmaker_compatible_final")) score += 16;
+  if (value.includes("plate")) score += 10;
+  if (value.includes("pick")) score += 8;
+  if (value.includes("top")) score += 6;
+  if (value.includes("thumbnail")) score -= 12;
+  if (value.includes("small")) score -= 25;
+  if (value.includes("no_light")) score -= 20;
+  return score;
+}
+
+function normalizePhotoSignature(label: string, href: string): string {
+  const normalizedLabel = label
+    .toLowerCase()
+    .replace(/^marketplace_\d+_?/, "")
+    .replace(/_(\d{2,3})$/, "")
+    .replace(/thumbnail_(small|middle)/g, "thumbnail")
+    .replace(/_small/g, "");
+  const filePart = href.split("?")[0]?.split("/").pop()?.toLowerCase() || "";
+  return `${normalizedLabel}::${filePart}`.replace(/[^a-z0-9:._-]+/g, "");
 }
 
 function safeFileName(value: string) {

@@ -5,7 +5,7 @@ import { useMemo, useState } from "react";
 
 import { useAuth } from "@/components/auth-provider";
 import { StatusBadge } from "@/components/status-badge";
-import { deleteProject, fetchProjectBundle, fileUrl, ProjectSummary } from "@/lib/api";
+import { deleteProject, fetchProjectBundle, fetchProjectPrintFile, fileUrl, ProjectSummary } from "@/lib/api";
 import { downloadUrlToUser } from "@/lib/download";
 import { PERMISSIONS } from "@/lib/permissions";
 
@@ -112,13 +112,21 @@ export function ProjectList({
                 setDownloadStatus(null);
                 setDownloadingId(project.id);
                 try {
-                  const bundle = await fetchProjectBundle(project.id);
-                  const href = fileUrl(bundle.path);
-                  if (!href) throw new Error("bundle_missing");
-                  await downloadUrlToUser(href, bundle.label);
-                  setDownloadStatus(`Projeto ${project.name} pronto para salvar.`);
+                  const printFile = await fetchProjectPrintFile(project.id);
+                  const href = fileUrl(printFile.path);
+                  if (!href) throw new Error("print_file_missing");
+                  await downloadUrlToUser(href, printFile.label);
+                  setDownloadStatus(`Arquivo de impressão de ${project.name} pronto para salvar.`);
                 } catch (error) {
-                  setDeleteError(error instanceof Error ? error.message : "Falha ao baixar projeto.");
+                  try {
+                    const bundle = await fetchProjectBundle(project.id);
+                    const href = fileUrl(bundle.path);
+                    if (!href) throw new Error("bundle_missing");
+                    await downloadUrlToUser(href, bundle.label);
+                    setDownloadStatus(`Arquivo final indisponível. ZIP consolidado de ${project.name} baixado.`);
+                  } catch (fallbackError) {
+                    setDeleteError(fallbackError instanceof Error ? fallbackError.message : "Falha ao baixar projeto.");
+                  }
                 } finally {
                   setDownloadingId(null);
                 }
@@ -240,7 +248,7 @@ function ProjectCard({
                 onClick={onDownload}
                 className="portal-action"
               >
-                {downloading ? "Preparando download..." : "Baixar projeto"}
+                {downloading ? "Preparando download..." : "Baixar para imprimir"}
               </button>
             ) : null}
             {canDelete ? (

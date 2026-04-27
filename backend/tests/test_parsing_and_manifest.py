@@ -2,7 +2,6 @@ from pathlib import Path
 import sys
 import zipfile
 
-sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.core.config import get_settings
 from app.services.bundle_service import BundleService

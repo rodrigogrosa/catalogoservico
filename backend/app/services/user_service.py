@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 import hashlib
 import hmac
 import json
+import os
+import time
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -59,7 +61,7 @@ class UserService:
                 return None
 
         record["last_login_at"] = datetime.now(tz=timezone.utc).isoformat()
-        self.save_records({**self.load_records(), self.record_key(username, "local"): record})
+        self.save_records({**records, self.record_key(username, "local"): record})
         return self.to_auth_user(record)
 
     def resolve_authenticated_user(self, username: str, provider: str, display_name: str | None = None) -> AuthUser | None:
@@ -181,13 +183,18 @@ class UserService:
         return {str(key): value for key, value in raw.items() if isinstance(value, dict)}
 
     def save_records(self, records: dict[str, dict[str, Any]]) -> None:
-        self.data_path.write_text(json.dumps(records, indent=2, ensure_ascii=False), encoding="utf-8")
+        encoded = json.dumps(records, indent=2, ensure_ascii=False)
+        temp_path = self.data_path.with_name(
+            f".{self.data_path.name}.tmp-{os.getpid()}-{int(time.time() * 1000)}"
+        )
+        temp_path.write_text(encoded, encoding="utf-8")
+        os.replace(temp_path, self.data_path)
 
     def master_user(self) -> AuthUser:
         role = self.roles["master"]
         return AuthUser(
             username=self.settings.master_username,
-            display_name="Rodrigo Rosa",
+            display_name=self.settings.master_display_name,
             role="master",
             provider="master",
             role_label=role.label,

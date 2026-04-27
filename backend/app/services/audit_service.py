@@ -56,6 +56,12 @@ class AuditService:
 
     def append_structured_log(self, logs_dir: Path, event: dict[str, Any]) -> str:
         path = logs_dir / "events.jsonl"
+        # Rotação simples: se o arquivo atingir 10 MB, renomeia para events.jsonl.1
+        _MAX_BYTES = 10 * 1024 * 1024
+        if path.exists() and path.stat().st_size >= _MAX_BYTES:
+            rotated = logs_dir / "events.jsonl.1"
+            rotated.unlink(missing_ok=True)
+            path.rename(rotated)
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(event, ensure_ascii=False) + "\n")
         return self.storage.to_storage_url(path)

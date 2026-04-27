@@ -4,7 +4,6 @@ import sys
 from fastapi.testclient import TestClient
 import pytest
 
-sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.core.config import get_settings
 from app.main import app
@@ -15,35 +14,13 @@ from app.services.user_service import UserService
 client = TestClient(app)
 
 
-@pytest.fixture(autouse=True)
-def clean_runtime_settings() -> None:
-    get_settings.cache_clear()
-    settings = get_settings()
-    (settings.storage_root / "_system" / "ai_runtime.json").unlink(missing_ok=True)
-    (settings.storage_root / "_system" / "users.json").unlink(missing_ok=True)
-    yield
-    get_settings.cache_clear()
-    settings = get_settings()
-    (settings.storage_root / "_system" / "ai_runtime.json").unlink(missing_ok=True)
-    (settings.storage_root / "_system" / "users.json").unlink(missing_ok=True)
-
-
-def master_token() -> str:
-    login = client.post(
-        "/api/v1/auth/login",
-        json={"username": "rodrigogrosa", "password": "Violao2021@"},
-    )
-    assert login.status_code == 200
-    return login.json()["access_token"]
-
-
 def test_ai_settings_requires_authentication() -> None:
     response = client.get("/api/v1/ai-settings")
     assert response.status_code == 401
 
 
-def test_master_can_get_and_update_ai_settings() -> None:
-    token = master_token()
+def test_master_can_get_and_update_ai_settings(master_token: str) -> None:
+    token = master_token
 
     get_response = client.get("/api/v1/ai-settings", headers={"Authorization": f"Bearer {token}"})
     assert get_response.status_code == 200

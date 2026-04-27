@@ -3,11 +3,15 @@
 import Link from "next/link";
 
 import { AppShell } from "@/components/app-shell";
+import { useAuth } from "@/components/auth-provider";
+import { AccessDeniedPanel } from "@/components/permission-gate";
 import { ProjectStatCard } from "@/components/project-stat-card";
 import { useProjects } from "@/hooks/use-projects";
+import { PERMISSIONS } from "@/lib/permissions";
 import { buildProjectMetrics, latestProjects } from "@/lib/project-metrics";
 
 export default function ReportsPage() {
+  const { can } = useAuth();
   const { error, loading, projects } = useProjects();
   const metrics = buildProjectMetrics(projects);
   const recentItems = latestProjects(projects, 10);
@@ -18,6 +22,11 @@ export default function ReportsPage() {
       title="Relatórios e auditoria"
       subtitle="Área para localizar entregáveis, manifestos, scores e rastreabilidade dos projetos convertidos."
     >
+      {!can(PERMISSIONS.reportsView) ? (
+        <div className="portal-stack">
+          <AccessDeniedPanel description="Seu perfil não possui acesso à área de relatórios e auditoria." />
+        </div>
+      ) : (
       <div className="portal-stack">
         <section className="grid border-b border-slate-900/10 py-7 md:grid-cols-4">
           <ProjectStatCard label="Projetos" value={`${metrics.total}`} />
@@ -63,6 +72,7 @@ export default function ReportsPage() {
           </div>
         </section>
       </div>
+      )}
     </AppShell>
   );
 }

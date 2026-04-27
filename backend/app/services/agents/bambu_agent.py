@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
-
-from app.core.config import get_settings
 from app.services.agents.base import BaseAgent
 from app.services.agents.prompts import BAMBU_PROMPT
 from app.services.conversion_service import ConversionService
@@ -14,18 +11,17 @@ class BambuAgent(BaseAgent):
 
     def __init__(self) -> None:
         self.conversion = ConversionService()
-        self.settings = get_settings()
 
     def run(self, context: dict[str, object]) -> dict[str, object]:
         source_file = context["source_file"]
         inspection = self.conversion.inspect_bambu_project(source_file)
         context["bambu_detected_items"] = inspection.get("detected_items", [])
-        conversion = self._convert_with_timeout(
+        conversion = self.conversion.convert_to_snapmaker(
             source_file,
             context["folders"]["export"],
-            context.get("support_plan"),
-            context.get("adhesion_plan"),
-            context["request"].scale_mode,
+            support_plan=context.get("support_plan"),
+            adhesion_plan=context.get("adhesion_plan"),
+            scale_mode=context["request"].scale_mode,
         )
 
         findings = inspection["findings"] + [f"Itens detectados: {', '.join(inspection.get('detected_items', [])) or 'nenhum'}."]
@@ -65,38 +61,3 @@ class BambuAgent(BaseAgent):
                 "limitations": conversion.get("lost", []),
             },
         )
-
-    def _convert_with_timeout(
-        self,
-        source_file: object,
-        export_dir: object,
-        support_plan: object,
-        adhesion_plan: object,
-        scale_mode: object,
-    ) -> dict[str, object]:
-        timeout_seconds = max(20, min(self.settings.stage_timeout_seconds, 90))
-        executor = ThreadPoolExecutor(max_workers=1)
-        future = executor.submit(
-            self.conversion.convert_to_snapmaker,
-            source_file,
-            export_dir,
-            support_plan=support_plan,
-            adhesion_plan=adhesion_plan,
-            scale_mode=scale_mode,
-        )
-        try:
-            return future.result(timeout=timeout_seconds)
-        except FutureTimeoutError:
-            future.cancel()
-            return {
-                "status": "failed",
-                "output_file": "",
-                "preserved": [],
-                "adapted": [],
-                "lost": [f"Conversão Bambu excedeu {timeout_seconds}s e foi interrompida em modo seguro."],
-                "support_plan": support_plan or {"enabled": False},
-                "adhesion_plan": adhesion_plan or {"mode": "skirt"},
-                "parameter_equivalence": [],
-            }
-        finally:
-            executor.shutdown(wait=False, cancel_futures=True)

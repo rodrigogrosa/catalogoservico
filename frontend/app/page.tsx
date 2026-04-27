@@ -4,13 +4,17 @@ import Link from "next/link";
 import { useMemo } from "react";
 
 import { AppShell } from "@/components/app-shell";
+import { useAuth } from "@/components/auth-provider";
+import { AccessDeniedPanel } from "@/components/permission-gate";
 import { ProjectList } from "@/components/project-list";
 import { ProjectQueuePanel } from "@/components/project-queue-panel";
 import { ProjectStatCard } from "@/components/project-stat-card";
 import { useProjects } from "@/hooks/use-projects";
+import { PERMISSIONS } from "@/lib/permissions";
 import { buildProjectMetrics, latestProjects } from "@/lib/project-metrics";
 
 export default function HomePage() {
+  const { can } = useAuth();
   const { error, loading, projects, refreshProjects } = useProjects();
   const metrics = useMemo(() => buildProjectMetrics(projects), [projects]);
   const recentProjects = useMemo(() => latestProjects(projects, 4), [projects]);
@@ -21,6 +25,11 @@ export default function HomePage() {
       title="Portal de operação e vendas"
       subtitle="Um ambiente profissional para transformar arquivos 3D em produtos prontos para imprimir, apresentar e publicar."
     >
+      {!can(PERMISSIONS.dashboardView) ? (
+        <div className="portal-stack pb-12">
+          <AccessDeniedPanel description="Seu perfil não possui acesso à visão geral executiva do portal." />
+        </div>
+      ) : (
       <div className="portal-stack pb-12">
         <section className="py-10 md:py-14">
           <div className="hero-panel grid gap-8 overflow-hidden rounded-[2rem] px-7 py-8 md:px-10 md:py-10 xl:grid-cols-[1.2fr_0.8fr] xl:items-center">
@@ -124,6 +133,7 @@ export default function HomePage() {
           )}
         </section>
       </div>
+      )}
     </AppShell>
   );
 }

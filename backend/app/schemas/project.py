@@ -260,3 +260,7 @@ class ProjectCompareResponse(BaseModel):
 
 class ProjectBundleResponse(BaseModel):
     bundle: ArtifactReference
+
+
+class ProjectPrintFileResponse(BaseModel):
+    print_file: ArtifactReference

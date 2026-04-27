@@ -3,13 +3,17 @@
 import { useState } from "react";
 
 import { AppShell } from "@/components/app-shell";
+import { useAuth } from "@/components/auth-provider";
+import { AccessDeniedPanel } from "@/components/permission-gate";
 import { ProjectList } from "@/components/project-list";
 import { SalesCatalogPanel } from "@/components/sales-catalog-panel";
 import { ProjectStatCard } from "@/components/project-stat-card";
 import { useProjects } from "@/hooks/use-projects";
+import { PERMISSIONS } from "@/lib/permissions";
 import { buildProjectMetrics } from "@/lib/project-metrics";
 
 export default function CatalogPage() {
+  const { can } = useAuth();
   const { error, loading, projects, refreshProjects } = useProjects();
   const [activeTab, setActiveTab] = useState<"projects" | "sales">("projects");
   const metrics = buildProjectMetrics(projects);
@@ -20,6 +24,11 @@ export default function CatalogPage() {
       title="Catálogo comercial e técnico"
       subtitle="Gerencie produções, galeria principal e preparação comercial em uma mesma vitrine."
     >
+      {!can(PERMISSIONS.catalogView) ? (
+        <div className="portal-stack pb-12">
+          <AccessDeniedPanel description="Seu perfil não possui acesso ao catálogo de projetos e produtos." />
+        </div>
+      ) : (
       <div className="portal-stack pb-12">
         <section className="py-10">
           <div className="portal-card rounded-[1.8rem] px-6 py-6">
@@ -67,6 +76,7 @@ export default function CatalogPage() {
           <ProjectList items={projects} onProjectDeleted={refreshProjects} />
         )}
       </div>
+      )}
     </AppShell>
   );
 }

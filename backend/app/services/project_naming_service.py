@@ -68,10 +68,13 @@ Nao invente franquia ou personagem sem boa base visual/textual.
         source_name: str,
         previews: list[dict[str, Any]] | None = None,
         source_url: str | None = None,
+        allow_vision: bool = True,
     ) -> str:
         cleaned = self._clean_source_name(source_name, source_url=source_url)
         character = self.sales_service.detect_character_context(cleaned)
         heuristic = self._heuristic_name(cleaned, character)
+        if not allow_vision:
+            return heuristic
         preview_file = self._resolve_preview_file(previews)
         if preview_file is None:
             return heuristic

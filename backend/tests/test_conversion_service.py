@@ -4,7 +4,6 @@ import sys
 from xml.etree import ElementTree as ET
 from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile
 
-sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.services.conversion_service import ConversionService
 

@@ -4,7 +4,6 @@ import sys
 from fastapi.testclient import TestClient
 import pytest
 
-sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.core.config import get_settings
 from app.main import app
@@ -13,26 +12,6 @@ from app.services.user_service import UserService
 
 
 client = TestClient(app)
-
-
-@pytest.fixture(autouse=True)
-def clean_users_store() -> None:
-    get_settings.cache_clear()
-    settings = get_settings()
-    (settings.storage_root / "_system" / "users.json").unlink(missing_ok=True)
-    yield
-    get_settings.cache_clear()
-    settings = get_settings()
-    (settings.storage_root / "_system" / "users.json").unlink(missing_ok=True)
-
-
-def master_token() -> str:
-    response = client.post(
-        "/api/v1/auth/login",
-        json={"username": "rodrigogrosa", "password": "Violao2021@"},
-    )
-    assert response.status_code == 200
-    return response.json()["access_token"]
 
 
 def local_token(username: str, password: str) -> str:
@@ -79,8 +58,8 @@ def test_only_master_can_mutate_users() -> None:
     assert "master" in create_response.json().get("detail", "").lower()
 
 
-def test_master_can_create_and_update_user_permissions() -> None:
-    token = master_token()
+def test_master_can_create_and_update_user_permissions(master_token: str) -> None:
+    token = master_token
 
     create_response = client.post(
         "/api/v1/users",

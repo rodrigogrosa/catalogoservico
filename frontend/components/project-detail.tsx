@@ -11,6 +11,7 @@ import {
   compareProjects,
   fetchProject,
   fetchProjectBundle,
+  fetchProjectPrintFile,
   fetchProjects,
   fileUrl,
   processProject,
@@ -100,6 +101,7 @@ export function ProjectDetailView({ project, section }: Props) {
   const [comparisonTarget, setComparisonTarget] = useState("");
   const [comparison, setComparison] = useState<ProjectCompareResponse | null>(null);
   const [bundlePath, setBundlePath] = useState<string | null>(null);
+  const [printFilePath, setPrintFilePath] = useState<string | null>(null);
 
   const isProcessing = currentProject.status === "processing";
   const processStages = useMemo(
@@ -157,6 +159,16 @@ export function ProjectDetailView({ project, section }: Props) {
       setMessage("Pacote consolidado gerado com sucesso.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Falha ao gerar bundle.");
+    }
+  }
+
+  async function handlePrintFile() {
+    try {
+      const printFile = await fetchProjectPrintFile(currentProject.id);
+      setPrintFilePath(printFile.path);
+      setMessage("Arquivo final para impressão localizado.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Falha ao localizar arquivo final para impressão.");
     }
   }
 
@@ -235,6 +247,8 @@ export function ProjectDetailView({ project, section }: Props) {
           onCompare={handleCompare}
           onBundle={handleBundle}
           bundlePath={bundlePath}
+          onPrintFile={handlePrintFile}
+          printFilePath={printFilePath}
         />
       ) : null}
 
@@ -613,6 +627,8 @@ function FilesSection({
   onCompare,
   onBundle,
   bundlePath,
+  onPrintFile,
+  printFilePath,
 }: {
   project: ProjectDetail;
   siblingVersions: ProjectSummary[];
@@ -622,6 +638,8 @@ function FilesSection({
   onCompare: () => Promise<void>;
   onBundle: () => Promise<void>;
   bundlePath: string | null;
+  onPrintFile: () => Promise<void>;
+  printFilePath: string | null;
 }) {
   const outputFolder = `${project.storage_path}/export`;
 
@@ -666,18 +684,34 @@ function FilesSection({
         description="Gera um ZIP único com exportações e documentos do projeto."
       >
         <div className="space-y-4">
-          <button
-            type="button"
-            onClick={() => void onBundle()}
-            className="inline-flex rounded-full bg-slate-950 px-5 py-3 text-sm font-semibold text-white"
-          >
-            Gerar ZIP consolidado
-          </button>
-          {bundlePath ? (
-            <a href={fileUrl(bundlePath)} target="_blank" className="inline-flex rounded-full border border-slate-900/10 bg-white px-5 py-3 text-sm font-semibold text-slate-900">
-              Abrir ZIP
-            </a>
-          ) : null}
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={() => void onPrintFile()}
+              className="inline-flex rounded-full bg-slate-950 px-5 py-3 text-sm font-semibold text-white"
+            >
+              Localizar arquivo para imprimir
+            </button>
+            <button
+              type="button"
+              onClick={() => void onBundle()}
+              className="inline-flex rounded-full border border-slate-900/10 bg-white px-5 py-3 text-sm font-semibold text-slate-900"
+            >
+              Gerar ZIP consolidado
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            {printFilePath ? (
+              <a href={fileUrl(printFilePath)} target="_blank" className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-5 py-3 text-sm font-semibold text-emerald-900">
+                Abrir arquivo final
+              </a>
+            ) : null}
+            {bundlePath ? (
+              <a href={fileUrl(bundlePath)} target="_blank" className="inline-flex rounded-full border border-slate-900/10 bg-white px-5 py-3 text-sm font-semibold text-slate-900">
+                Abrir ZIP
+              </a>
+            ) : null}
+          </div>
         </div>
       </SectionCard>
 

@@ -1,7 +1,6 @@
 from pathlib import Path
 import sys
 
-sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.core.config import Settings
 from app.services.free_ai_service import FreeAiService

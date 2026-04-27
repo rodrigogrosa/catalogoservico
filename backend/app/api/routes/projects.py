@@ -1,7 +1,6 @@
-import asyncio
 import logging
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 
 from app.core.auth import require_permission
 from app.schemas.auth import AuthUser
@@ -9,6 +8,7 @@ from app.schemas.project import (
     ImportUrlRequest,
     ProcessProjectRequest,
     ProjectBundleResponse,
+    ProjectPrintFileResponse,
     ProjectCompareResponse,
     ProjectDetailResponse,
     ProjectListResponse,
@@ -106,6 +106,7 @@ async def import_project_url(
 async def process_project(
     project_id: str,
     payload: ProcessProjectRequest,
+    background_tasks: BackgroundTasks,
     service: ProjectService = Depends(get_project_service),
     current_user: AuthUser = Depends(require_permission("projects.process")),
 ) -> ProjectSummary:
@@ -113,8 +114,10 @@ async def process_project(
     project = service.get_project(project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="Projeto nao encontrado.")
+    if project.status == "processing":
+        raise HTTPException(status_code=409, detail="Projeto ja esta em processamento. Aguarde concluir ou atualize o status.")
 
-    asyncio.create_task(service.process_project(project_id, payload))
+    background_tasks.add_task(service.process_project, project_id, payload)
     current = project.model_dump()
     current["status"] = "processing"
     return ProjectSummary(**current)
@@ -144,6 +147,23 @@ async def build_project_bundle(
     if project is None:
         raise HTTPException(status_code=404, detail="Projeto nao encontrado.")
     return service.build_bundle(project_id)
+
+
+@router.get("/{project_id}/print-file", response_model=ProjectPrintFileResponse)
+async def get_project_print_file(
+    project_id: str,
+    service: ProjectService = Depends(get_project_service),
+    current_user: AuthUser = Depends(require_permission("projects.download")),
+) -> ProjectPrintFileResponse:
+    logger.info("project_print_file_requested", extra={"username": current_user.username, "project_id": project_id})
+    project = service.get_project(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Projeto nao encontrado.")
+    try:
+        artifact = service.build_print_file(project_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return ProjectPrintFileResponse(print_file=artifact)
 
 
 @router.get("/{project_id}/compare/{other_project_id}", response_model=ProjectCompareResponse)

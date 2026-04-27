@@ -3,12 +3,15 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { AppShell } from "@/components/app-shell";
+import { useAuth } from "@/components/auth-provider";
+import { AccessDeniedPanel } from "@/components/permission-gate";
 import {
   fetchSocialLoginProviders,
   type SocialLoginField,
   type SocialLoginProviderConfig,
   updateSocialLoginProvider,
 } from "@/lib/api";
+import { PERMISSIONS } from "@/lib/permissions";
 
 type ProviderFormState = {
   credentials: Record<string, string>;
@@ -18,6 +21,7 @@ type ProviderFormState = {
 };
 
 export default function SocialLoginPage() {
+  const { can } = useAuth();
   const [providers, setProviders] = useState<SocialLoginProviderConfig[]>([]);
   const [forms, setForms] = useState<Record<string, ProviderFormState>>({});
   const [loading, setLoading] = useState(true);
@@ -119,6 +123,11 @@ export default function SocialLoginPage() {
       title="Identidade e login social"
       subtitle="Gerencie os provedores de acesso do portal em uma central única, com redirects prontas, documentação oficial e ativação controlada."
     >
+      {!can(PERMISSIONS.socialLoginView) ? (
+        <div className="space-y-10 px-5 py-8 md:px-10 2xl:px-16">
+          <AccessDeniedPanel description="Seu perfil não possui acesso à configuração de login social." />
+        </div>
+      ) : (
       <div className="space-y-10 px-5 py-8 md:px-10 2xl:px-16">
         <section className="grid gap-8 border-b border-slate-900/10 pb-10 xl:grid-cols-[1.1fr_0.9fr]">
           <div>
@@ -157,6 +166,7 @@ export default function SocialLoginPage() {
           </div>
         )}
       </div>
+      )}
     </AppShell>
   );
 }

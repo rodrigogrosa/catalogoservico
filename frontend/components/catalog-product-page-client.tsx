@@ -4,10 +4,14 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { AppShell } from "@/components/app-shell";
+import { useAuth } from "@/components/auth-provider";
+import { AccessDeniedPanel } from "@/components/permission-gate";
 import { SalesProductDetail } from "@/components/sales-product-detail";
 import { fetchProject, type ProjectDetail } from "@/lib/api";
+import { PERMISSIONS } from "@/lib/permissions";
 
 export function CatalogProductPageClient({ id }: { id: string }) {
+  const { can } = useAuth();
   const [project, setProject] = useState<ProjectDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -26,6 +30,14 @@ export function CatalogProductPageClient({ id }: { id: string }) {
     return (
       <AppShell active="Catálogo" title="Carregando produto" subtitle="Buscando ficha comercial.">
         <section className="panel p-6 text-base text-slate-700">Carregando ficha comercial...</section>
+      </AppShell>
+    );
+  }
+
+  if (!can(PERMISSIONS.catalogView)) {
+    return (
+      <AppShell active="Catálogo" title="Acesso restrito" subtitle="Seu perfil não tem permissão para abrir a ficha comercial.">
+        <AccessDeniedPanel description="Seu perfil não possui acesso ao catálogo comercial." />
       </AppShell>
     );
   }

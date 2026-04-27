@@ -45,6 +45,8 @@ from app.services.storage_service import StorageService
 logger = logging.getLogger(__name__)
 
 DIRECT_PROJECT_SUFFIXES = {".3mf", ".stl", ".obj", ".step", ".stp", ".amf", ".zip"}
+PRINTABLE_ARTIFACT_SUFFIXES = (".gcode", ".3mf", ".stl", ".obj", ".amf", ".step", ".stp")
+PRINTABLE_ARTIFACT_PRIORITIES = {".gcode": 0, ".3mf": 1, ".stl": 2, ".obj": 3, ".amf": 4, ".step": 5, ".stp": 6}
 
 class ProjectService:
     def __init__(self) -> None:
@@ -67,6 +69,8 @@ class ProjectService:
         self.manifest_service = ManifestService()
         self.slicer_validation = SlicerValidationService()
         self.bundle_service = BundleService()
+        self._processing_locks: dict[str, threading.Lock] = {}
+        self._processing_locks_guard = threading.Lock()
 
     async def create_project(
         self,
@@ -79,7 +83,10 @@ class ProjectService:
             raise ValueError("Nenhum arquivo enviado.")
         if len(uploads) > self.settings.max_project_files:
             raise ValueError(f"O projeto excede o limite de {self.settings.max_project_files} arquivos por upload.")
-        project_name = requested_name or self.make_friendly_project_name(uploads[0].filename if uploads else "projeto-3d")
+        project_name = requested_name or self.make_friendly_project_name(
+            uploads[0].filename if uploads else "projeto-3d",
+            allow_vision=False,
+        )
         logger.info(
             "project_create_started",
             extra={
@@ -118,7 +125,11 @@ class ProjectService:
         if self.is_makerworld_model_page(parsed):
             raise ValueError(self.makerworld_page_error())
 
-        project_name = requested_name or self.make_friendly_project_name(unquote(parsed.path), source_url=url)
+        project_name = requested_name or self.make_friendly_project_name(
+            unquote(parsed.path),
+            source_url=url,
+            allow_vision=False,
+        )
         layout = self.storage.create_project_layout(project_name)
         logger.info(
             "project_import_from_url_started",
@@ -187,9 +198,14 @@ class ProjectService:
         now = datetime.now(tz=timezone.utc)
         previews = self.collect_previews(saved_files, layout["folders"]["previews"])
         if origin_url:
-            project_name = self.make_friendly_project_name(project_name, previews=previews, source_url=origin_url)
+            project_name = self.make_friendly_project_name(
+                project_name,
+                previews=previews,
+                source_url=origin_url,
+                allow_vision=False,
+            )
         else:
-            project_name = self.make_friendly_project_name(project_name, previews=previews)
+            project_name = self.make_friendly_project_name(project_name, previews=previews, allow_vision=False)
         preview_url = self.resolve_preview_url(previews, primary_source)
         manifest = {
             "id": layout["version_name"],
@@ -290,8 +306,14 @@ class ProjectService:
         source_name: str,
         previews: list[dict[str, Any]] | None = None,
         source_url: str | None = None,
+        allow_vision: bool = True,
     ) -> str:
-        return self.naming_service.generate_name(source_name=source_name, previews=previews, source_url=source_url)
+        return self.naming_service.generate_name(
+            source_name=source_name,
+            previews=previews,
+            source_url=source_url,
+            allow_vision=allow_vision,
+        )
 
     def download_project_url(self, url: str, target_dir: Path, project_name: str) -> Path:
         logger.info("project_download_started", extra={"project_name": project_name, "url": url})
@@ -431,12 +453,10 @@ class ProjectService:
         }
 
     def list_projects(self) -> list[ProjectSummary]:
-        manifests = self.storage.list_manifests()
+        manifest_summaries = self.storage.list_manifests()
         summaries: list[ProjectSummary] = []
-        for manifest in manifests:
+        for manifest in manifest_summaries:
             try:
-                self.ensure_preview_fields(manifest, persist=True, generate_marketplace=False)
-                self.ensure_sales_profile(manifest, persist=True, allow_llm=False)
                 summaries.append(ProjectSummary(**manifest))
             except Exception:
                 logger.exception(
@@ -454,6 +474,7 @@ class ProjectService:
         manifest = self.storage.load_manifest(project_id)
         if manifest is None:
             return None
+        self.recover_stale_processing(manifest, persist=True)
         # Endpoint de leitura deve ser rápido e não bloquear UI com extrações pesadas.
         # A regeneração de previews fica no fluxo dedicado de processamento/refresh.
         self.ensure_preview_fields(manifest, persist=True, extract_missing=False, generate_marketplace=False)
@@ -472,8 +493,19 @@ class ProjectService:
         return self.storage.delete_project(project_id)
 
     async def process_project(self, project_id: str, request: ProcessProjectRequest) -> None:
+        lock = self.project_processing_lock(project_id)
+        if not lock.acquire(blocking=False):
+            logger.warning("project_process_already_running", extra={"project_id": project_id})
+            return
+
         manifest = self.storage.load_manifest(project_id)
         if manifest is None:
+            lock.release()
+            return
+        self.recover_stale_processing(manifest, persist=True)
+        if manifest.get("status") == "processing":
+            logger.info("project_process_skipped_already_processing", extra={"project_id": project_id})
+            lock.release()
             return
 
         project_root = Path(manifest["storage_path"])
@@ -566,23 +598,22 @@ class ProjectService:
             flattened_risks = [item for output in outputs for item in output["riscos"]]
             pending_questions = self.normalize_questions([item for output in outputs for item in output["perguntas_ao_usuario"]])
             blocking_questions = [question for question in pending_questions if question["kind"] == "blocking"]
+            update_stage("reports", "Geração de relatórios", "in_progress", "Consolidando artefatos e preparando relatórios.")
             generated_artifacts = self.collect_generated_artifacts(outputs)
-            preview_assets = self.collect_previews(original_files, folders["previews"])
-            for artifact in generated_artifacts:
-                if "/storage/" not in artifact["path"]:
-                    continue
-                artifact_path = self.settings.storage_root / artifact["path"].split("/storage/", 1)[1]
-                if artifact_path.exists():
-                    preview_assets.extend(
-                        self.preview_service.extract_preview_assets(artifact_path, folders["previews"], self.settings.storage_root, artifact_path.stem)
-                    )
-
-            slicer_validations: list[dict[str, Any]] = []
-            for artifact in generated_artifacts:
-                if artifact["path"].endswith(".3mf"):
-                    artifact_path = self.settings.storage_root / artifact["path"].split("/storage/", 1)[1]
-                    if artifact_path.exists():
-                        slicer_validations.append(self.slicer_validation.validate_project_export(artifact_path))
+            preview_assets = self.collect_previews_fast(folders["previews"])
+            # Hotfix operacional:
+            # - evita travamento do worker em projetos 3MF pesados durante etapa síncrona pós-orquestração
+            # - validação detalhada de slicer e extração adicional de previews passam a ser tratadas fora do caminho crítico
+            slicer_validations: list[dict[str, Any]] = [
+                {
+                    "status": "skipped",
+                    "findings": [
+                        "Validação operacional detalhada foi adiada para pós-processamento assíncrono para manter estabilidade do pipeline."
+                    ],
+                    "risks": [],
+                    "estimates": {},
+                }
+            ]
 
             report_payload = {
                 "status": "awaiting_user" if blocking_questions else "completed",
@@ -597,7 +628,6 @@ class ProjectService:
                 "knowledge_rules": context.get("knowledge_rules", []),
                 "slicer_validations": slicer_validations,
             }
-            update_stage("reports", "Geração de relatórios", "in_progress", "Montando relatórios técnico e JSON.")
             report_artifacts = self.report_service.write_report_bundle(folders["reports"], report_payload)
             snapshot = self.build_snapshot(original_files, request, outputs, generated_artifacts, flattened_risks)
             snapshot_artifact = self.audit.write_snapshot(folders["reports"], snapshot)
@@ -620,7 +650,7 @@ class ProjectService:
             manifest["questions_pending"] = pending_questions
             manifest["blocking_questions"] = blocking_questions
             manifest["artifacts"] = generated_artifacts
-            manifest["previews"] = list({f"{item['label']}::{item['path']}": item for item in preview_assets}.values())
+            manifest["previews"] = self.curate_preview_assets(preview_assets, previews_dir=folders["previews"])
             manifest["preview_url"] = self.resolve_preview_url(manifest["previews"], source_file)
             manifest["reports"] = report_artifacts
             manifest["metadata"]["agent_outputs"] = outputs
@@ -670,6 +700,95 @@ class ProjectService:
                 status="failed",
             )
             logger.exception("Falha ao processar projeto %s", project_id)
+        finally:
+            lock.release()
+
+    def project_processing_lock(self, project_id: str) -> threading.Lock:
+        with self._processing_locks_guard:
+            lock = self._processing_locks.get(project_id)
+            if lock is None:
+                lock = threading.Lock()
+                self._processing_locks[project_id] = lock
+            return lock
+
+    def recover_stale_processing(self, manifest: dict[str, Any], persist: bool = False) -> bool:
+        if manifest.get("status") != "processing":
+            return False
+
+        updated_at = self.parse_manifest_datetime(manifest.get("updated_at"))
+        if updated_at is None:
+            return False
+
+        age_seconds = (datetime.now(tz=timezone.utc) - updated_at).total_seconds()
+        stale_after = max(120, int(self.settings.processing_stale_seconds))
+        if age_seconds <= stale_after:
+            return False
+
+        now = datetime.now(tz=timezone.utc).isoformat()
+        manifest["status"] = "failed"
+        manifest["updated_at"] = now
+        risks = manifest.setdefault("risks", [])
+        risks.append(
+            f"Processamento anterior interrompido por timeout operacional ({int(age_seconds)}s sem heartbeat)."
+        )
+        for stage in manifest.get("processing_stages", []):
+            if stage.get("status") == "in_progress":
+                stage["status"] = "failed"
+                stage["message"] = "Etapa interrompida por timeout/reinício do worker. Reexecute o processamento."
+                stage["completed_at"] = now
+                if stage.get("started_at"):
+                    started = self.parse_manifest_datetime(stage.get("started_at"))
+                    if started is not None:
+                        stage["duration_ms"] = max(
+                            0.0,
+                            round((datetime.now(tz=timezone.utc) - started).total_seconds() * 1000, 2),
+                        )
+                    else:
+                        stage["duration_ms"] = 0.0
+                else:
+                    stage["started_at"] = now
+                    stage["duration_ms"] = 0.0
+        self.update_stage_status(
+            manifest,
+            "pipeline_timeout",
+            "Timeout operacional",
+            "failed",
+            "Processamento interrompido por falta de heartbeat; execute novamente.",
+        )
+        if persist:
+            self.storage.save_manifest(manifest)
+            try:
+                self.append_log(
+                    Path(manifest["storage_path"]) / "logs",
+                    "Recuperação automática de pipeline travado aplicada.",
+                    stage_key="pipeline_timeout",
+                    status="failed",
+                )
+            except Exception:
+                logger.exception("project_stale_log_write_failed", extra={"project_id": manifest.get("id")})
+        logger.warning(
+            "project_processing_recovered_as_stale",
+            extra={
+                "project_id": manifest.get("id"),
+                "age_seconds": round(age_seconds, 2),
+                "stale_after_seconds": stale_after,
+            },
+        )
+        return True
+
+    def parse_manifest_datetime(self, raw_value: Any) -> datetime | None:
+        if not isinstance(raw_value, str) or not raw_value.strip():
+            return None
+        value = raw_value.strip()
+        if value.endswith("Z"):
+            value = value[:-1] + "+00:00"
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed
 
     def build_requested_actions(self, request: ProcessProjectRequest) -> list[str]:
         actions = []
@@ -857,6 +976,15 @@ class ProjectService:
         artifact = self.bundle_service.build_project_bundle(Path(project.storage_path))
         return ProjectBundleResponse(bundle=ArtifactReference(**artifact))
 
+    def build_print_file(self, project_id: str) -> dict[str, Any]:
+        project = self.get_project(project_id)
+        if project is None:
+            raise FileNotFoundError("Projeto não encontrado.")
+        artifact = self.select_printable_artifact(project.model_dump())
+        if artifact is None:
+            raise FileNotFoundError("Nenhum arquivo final de impressão encontrado na pasta de exportação.")
+        return artifact
+
     def select_primary_input(self, files: list[Path]) -> Path | None:
         priority = {".3mf": 0, ".stl": 1, ".obj": 2, ".step": 3, ".stp": 4, ".amf": 5, ".ply": 6, ".off": 7}
         candidates = sorted((file_path for file_path in files if file_path.is_file()), key=lambda item: priority.get(item.suffix.lower(), 99))
@@ -865,20 +993,20 @@ class ProjectService:
     def collect_previews(self, files: list[Path], previews_dir: Path) -> list[dict[str, str]]:
         preview_assets = self.preview_service.collect_existing_previews(previews_dir, self.settings.storage_root)
         for file_path in files:
-            preview_assets.extend(
-                self.preview_service.extract_preview_assets(file_path, previews_dir, self.settings.storage_root, file_path.stem)
-            )
-        preview_assets.extend(
-            self.preview_service.generate_marketplace_ready_assets(
-                previews_dir,
-                self.settings.storage_root,
-                files,
-                None,
-                force=True,
-            )
-        )
-        deduped = {f"{item['label']}::{item['path']}": item for item in preview_assets}
-        return list(deduped.values())
+            try:
+                preview_assets.extend(
+                    self.preview_service.extract_preview_assets(file_path, previews_dir, self.settings.storage_root, file_path.stem)
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "preview_extract_failed",
+                    extra={"file_path": str(file_path), "error": str(exc)},
+                )
+        return self.curate_preview_assets(preview_assets, previews_dir=previews_dir)
+
+    def collect_previews_fast(self, previews_dir: Path) -> list[dict[str, str]]:
+        preview_assets = self.preview_service.collect_existing_previews(previews_dir, self.settings.storage_root)
+        return self.curate_preview_assets(preview_assets, previews_dir=previews_dir)
 
     def enrich_previews_with_ai(
         self,
@@ -948,6 +1076,17 @@ class ProjectService:
             return None
         return self.preview_service.build_preview_url(fallback_file, self.settings.storage_root)
 
+    def curate_preview_assets(self, preview_assets: list[dict[str, Any]], previews_dir: Path | None = None) -> list[dict[str, str]]:
+        deduped = {f"{item['label']}::{item['path']}": item for item in preview_assets if item.get("path")}
+        curated = self.preview_service.curate_project_previews(
+            list(deduped.values()),
+            self.settings.storage_root,
+            max_items=max(1, int(getattr(self.settings, "max_project_previews", 5))),
+        )
+        if previews_dir is not None:
+            self.preview_service.prune_preview_directory(previews_dir, curated, self.settings.storage_root)
+        return curated
+
     def ensure_preview_fields(
         self,
         manifest: dict[str, Any],
@@ -971,17 +1110,25 @@ class ProjectService:
         source_files = [Path(file_info["path"]) for file_info in manifest.get("input_files", []) if file_info.get("path")]
         dimensions_mm = self.preview_dimensions_from_manifest(manifest)
         if generate_marketplace:
-            preview_assets.extend(
-                self.preview_service.generate_marketplace_ready_assets(
-                    previews_dir,
-                    self.settings.storage_root,
-                    source_files,
-                    dimensions_mm,
-                    force=extract_missing,
+            try:
+                preview_assets.extend(
+                    self.preview_service.generate_marketplace_ready_assets(
+                        previews_dir,
+                        self.settings.storage_root,
+                        source_files,
+                        dimensions_mm,
+                        force=extract_missing,
+                    )
                 )
-            )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "ensure_preview_marketplace_generation_failed",
+                    extra={"project_id": manifest.get("id"), "error": str(exc)},
+                )
         if preview_assets:
-            manifest["previews"] = list({f"{item['label']}::{item['path']}": item for item in preview_assets}.values())
+            manifest["previews"] = self.curate_preview_assets(preview_assets, previews_dir=previews_dir)
+        else:
+            manifest["previews"] = []
         source_file = None
         for file_info in manifest.get("input_files", []):
             if file_info.get("role") == "primary":
@@ -1008,15 +1155,21 @@ class ProjectService:
                     preview_assets.extend(
                         self.preview_service.extract_preview_assets(file_path, previews_dir, self.settings.storage_root, file_path.stem)
                     )
-        preview_assets.extend(
-            self.preview_service.generate_marketplace_ready_assets(
-                previews_dir,
-                self.settings.storage_root,
-                source_files,
-                dimensions_mm,
-                force=True,
+        try:
+            preview_assets.extend(
+                self.preview_service.generate_marketplace_ready_assets(
+                    previews_dir,
+                    self.settings.storage_root,
+                    source_files,
+                    dimensions_mm,
+                    force=True,
+                )
             )
-        )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "refresh_preview_marketplace_generation_failed",
+                extra={"project_id": project_id, "error": str(exc)},
+            )
         ai_media_meta = self.enrich_previews_with_ai(
             previews=preview_assets,
             previews_dir=previews_dir,
@@ -1028,7 +1181,7 @@ class ProjectService:
         )
         manifest.setdefault("metadata", {})
         manifest["metadata"]["ai_media_pipeline"] = ai_media_meta
-        manifest["previews"] = list({f"{item['label']}::{item['path']}": item for item in preview_assets}.values())
+        manifest["previews"] = self.curate_preview_assets(preview_assets, previews_dir=previews_dir)
         self.ensure_preview_fields(manifest, persist=True, extract_missing=False, generate_marketplace=False)
         self.ensure_sales_profile(manifest, persist=True, allow_llm=False)
         manifest_path = Path(manifest["storage_path"]) / "project_manifest.json"
@@ -1074,6 +1227,22 @@ class ProjectService:
                 preview_assets = list(manifest.get("previews") or [])
                 if not preview_assets:
                     preview_assets = self.preview_service.collect_existing_previews(previews_dir, self.settings.storage_root)
+                try:
+                    dimensions_mm = self.preview_dimensions_from_manifest(manifest)
+                    preview_assets.extend(
+                        self.preview_service.generate_marketplace_ready_assets(
+                            previews_dir,
+                            self.settings.storage_root,
+                            source_files,
+                            dimensions_mm,
+                            force=False,
+                        )
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "post_import_marketplace_preview_failed",
+                        extra={"project_id": project_id, "error": str(exc)},
+                    )
                 ai_meta = self.enrich_previews_with_ai(
                     previews=preview_assets,
                     previews_dir=previews_dir,
@@ -1081,9 +1250,17 @@ class ProjectService:
                     project_name=str(manifest.get("name") or manifest.get("slug") or "Projeto 3D"),
                     detected=detected,
                 )
+                original_name_source = str(manifest.get("original_filename") or manifest.get("name") or "")
+                refined_name = self.make_friendly_project_name(
+                    original_name_source,
+                    previews=preview_assets,
+                    allow_vision=True,
+                )
+                if refined_name:
+                    manifest["name"] = refined_name
                 manifest.setdefault("metadata", {})
                 manifest["metadata"]["ai_media_pipeline"] = {"status": "completed", **ai_meta}
-                manifest["previews"] = list({f"{item['label']}::{item['path']}": item for item in preview_assets}.values())
+                manifest["previews"] = self.curate_preview_assets(preview_assets, previews_dir=previews_dir)
                 self.ensure_sales_profile(manifest, persist=False, allow_llm=True)
                 manifest["updated_at"] = datetime.now(tz=timezone.utc).isoformat()
                 self.storage.save_manifest(manifest)
@@ -1202,3 +1379,77 @@ class ProjectService:
             "warnings": risks[:8],
             "recommendations": recommendations,
         }
+
+    def select_printable_artifact(self, project: dict[str, Any]) -> dict[str, Any] | None:
+        candidates: list[dict[str, Any]] = []
+        artifacts = list(project.get("artifacts") or [])
+        for artifact in artifacts:
+            raw_path = str(artifact.get("path") or "")
+            local_path = self.storage_path_from_artifact(raw_path)
+            if local_path is None or local_path.suffix.lower() not in PRINTABLE_ARTIFACT_SUFFIXES:
+                continue
+            artifact_path = raw_path
+            if not artifact_path.startswith("/storage/") and not artifact_path.startswith("http"):
+                artifact_path = self.storage.to_storage_url(local_path)
+            candidates.append(
+                {
+                    "label": str(artifact.get("label") or local_path.name),
+                    "path": artifact_path,
+                    "kind": str(artifact.get("kind") or "artifact"),
+                    "sha256": artifact.get("sha256") or self.checksum.sha256(local_path),
+                    "size_bytes": artifact.get("size_bytes") or local_path.stat().st_size,
+                    "_local_path": local_path,
+                }
+            )
+
+        export_dir = Path(project.get("storage_path", "")) / "export"
+        if export_dir.exists():
+            for local_path in export_dir.iterdir():
+                if not local_path.is_file() or local_path.suffix.lower() not in PRINTABLE_ARTIFACT_SUFFIXES:
+                    continue
+                candidates.append(
+                    {
+                        "label": local_path.name,
+                        "path": self.storage.to_storage_url(local_path),
+                        "kind": "artifact",
+                        "sha256": self.checksum.sha256(local_path),
+                        "size_bytes": local_path.stat().st_size,
+                        "_local_path": local_path,
+                    }
+                )
+        if not candidates:
+            return None
+
+        def score(item: dict[str, Any]) -> tuple[int, int, str]:
+            local_path = item.get("_local_path")
+            suffix = local_path.suffix.lower() if isinstance(local_path, Path) else Path(str(item.get("label", ""))).suffix.lower()
+            extension_priority = PRINTABLE_ARTIFACT_PRIORITIES.get(suffix, 99)
+            label = str(item.get("label") or "").lower()
+            keyword_priority = 0
+            if "snapmaker_compatible_final" in label or "_final" in label:
+                keyword_priority -= 3
+            elif "snapmaker_compatible" in label:
+                keyword_priority -= 2
+            elif "final" in label:
+                keyword_priority -= 1
+            return (extension_priority, keyword_priority, label)
+
+        selected = sorted(candidates, key=score)[0]
+        selected.pop("_local_path", None)
+        return selected
+
+    def storage_path_from_artifact(self, raw_path: str) -> Path | None:
+        value = raw_path.strip()
+        if not value:
+            return None
+        if value.startswith("/storage/"):
+            candidate = self.settings.storage_root / value.split("/storage/", 1)[1]
+            return candidate if candidate.exists() else None
+        if value.startswith("http://") or value.startswith("https://"):
+            parsed = urlparse(value)
+            if "/storage/" in parsed.path:
+                candidate = self.settings.storage_root / parsed.path.split("/storage/", 1)[1]
+                return candidate if candidate.exists() else None
+            return None
+        candidate = Path(value)
+        return candidate if candidate.exists() else None

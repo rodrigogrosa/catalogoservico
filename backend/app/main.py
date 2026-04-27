@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from contextlib import suppress
 import asyncio
 import logging
+import sys
 from time import perf_counter
 from uuid import uuid4
 
@@ -31,8 +31,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-Id"],
 )
 
 app.include_router(api_router, prefix="/api/v1")
@@ -45,6 +45,16 @@ _SECURITY_HEADERS = {
     "Referrer-Policy": "strict-origin-when-cross-origin",
     "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
     "Cache-Control": "no-store",
+    "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
+    "Content-Security-Policy": (
+        "default-src 'self'; "
+        "img-src 'self' data: blob:; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "connect-src 'self'; "
+        "worker-src 'self' blob:; "
+        "frame-ancestors 'none'"
+    ),
 }
 
 
@@ -124,7 +134,7 @@ async def request_validation_exception_handler(request: Request, exc: RequestVal
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    with suppress(Exception):
+    try:
         logger.exception(
             "request_unhandled_exception",
             extra={
@@ -132,6 +142,8 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
                 "path": request.url.path,
             },
         )
+    except Exception as log_exc:  # noqa: BLE001
+        print(f"LOGGER FAILED: {log_exc!r} | Original exception: {exc!r}", file=sys.stderr)
     return JSONResponse(
         status_code=500,
         content={"detail": "Erro interno inesperado.", "request_id": get_request_id()},

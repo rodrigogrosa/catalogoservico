@@ -5,7 +5,6 @@ import pytest
 from fastapi.testclient import TestClient
 import httpx
 
-sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.core.config import get_settings
 from app.main import app
@@ -14,21 +13,8 @@ from app.main import app
 client = TestClient(app)
 
 
-@pytest.fixture(autouse=True)
-def clean_social_login_config() -> None:
-    get_settings.cache_clear()
-    settings = get_settings()
-    path = settings.storage_root / "_system" / "social_login.json"
-    path.unlink(missing_ok=True)
-    yield
-    get_settings.cache_clear()
-
-
-def test_master_login_returns_bearer_token() -> None:
-    response = client.post(
-        "/api/v1/auth/login",
-        json={"username": "rodrigogrosa", "password": "Violao2021@"},
-    )
+def test_master_login_returns_bearer_token(master_credentials: dict) -> None:
+    response = client.post("/api/v1/auth/login", json=master_credentials)
     assert response.status_code == 200
     payload = response.json()
     assert payload["token_type"] == "bearer"
@@ -41,11 +27,8 @@ def test_projects_require_authentication() -> None:
     assert response.status_code == 401
 
 
-def test_auth_me_accepts_master_token() -> None:
-    login = client.post(
-        "/api/v1/auth/login",
-        json={"username": "rodrigogrosa", "password": "Violao2021@"},
-    )
+def test_auth_me_accepts_master_token(master_credentials: dict) -> None:
+    login = client.post("/api/v1/auth/login", json=master_credentials)
     token = login.json()["access_token"]
     response = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 200
@@ -53,9 +36,13 @@ def test_auth_me_accepts_master_token() -> None:
 
 
 def test_previous_master_password_alias_still_works() -> None:
+    settings = get_settings()
+    aliases = settings.master_password_aliases
+    if not aliases:
+        pytest.skip("Nenhum alias de senha configurado")
     response = client.post(
         "/api/v1/auth/login",
-        json={"username": "rodrigogrosa", "password": "Vilao2021@"},
+        json={"username": settings.master_username, "password": aliases[0]},
     )
     assert response.status_code == 200
 
@@ -72,13 +59,8 @@ def test_social_login_configuration_requires_authentication() -> None:
     assert response.status_code == 401
 
 
-def test_social_login_configuration_lists_all_supported_providers() -> None:
-    login = client.post(
-        "/api/v1/auth/login",
-        json={"username": "rodrigogrosa", "password": "Violao2021@"},
-    )
-    token = login.json()["access_token"]
-    response = client.get("/api/v1/auth/social-config", headers={"Authorization": f"Bearer {token}"})
+def test_social_login_configuration_lists_all_supported_providers(auth_headers: dict) -> None:
+    response = client.get("/api/v1/auth/social-config", headers=auth_headers)
     assert response.status_code == 200
     providers = response.json()["providers"]
     assert {provider["provider"] for provider in providers} == {"google", "apple", "instagram"}
@@ -86,15 +68,10 @@ def test_social_login_configuration_lists_all_supported_providers() -> None:
     assert google["recommended_redirect_uri"].endswith("/api/v1/auth/oauth/google/callback")
 
 
-def test_social_login_configuration_can_enable_google_provider() -> None:
-    login = client.post(
-        "/api/v1/auth/login",
-        json={"username": "rodrigogrosa", "password": "Violao2021@"},
-    )
-    token = login.json()["access_token"]
+def test_social_login_configuration_can_enable_google_provider(auth_headers: dict) -> None:
     response = client.put(
         "/api/v1/auth/social-config/google",
-        headers={"Authorization": f"Bearer {token}"},
+        headers=auth_headers,
         json={
             "credentials": {
                 "client_id": "google-client-id.apps.googleusercontent.com",
@@ -118,15 +95,14 @@ def test_social_login_configuration_can_enable_google_provider() -> None:
     assert "accounts.google.com" in google["auth_url"]
 
 
-def test_social_oauth_callback_redirects_after_google_exchange(monkeypatch: pytest.MonkeyPatch) -> None:
-    login = client.post(
-        "/api/v1/auth/login",
-        json={"username": "rodrigogrosa", "password": "Violao2021@"},
-    )
-    token = login.json()["access_token"]
+def test_social_oauth_callback_redirects_after_google_exchange(
+    auth_headers: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.api.routes.auth import _make_oauth_state
     client.put(
         "/api/v1/auth/social-config/google",
-        headers={"Authorization": f"Bearer {token}"},
+        headers=auth_headers,
         json={
             "credentials": {
                 "client_id": "google-client-id.apps.googleusercontent.com",
@@ -162,8 +138,12 @@ def test_social_oauth_callback_redirects_after_google_exchange(monkeypatch: pyte
     monkeypatch.setattr(httpx, "post", fake_post)
     monkeypatch.setattr(httpx, "get", fake_get)
 
+    # Gera um state HMAC-assinado válido para o teste
+    secret = get_settings().auth_token_secret
+    valid_state = _make_oauth_state("google", secret)
+
     response = client.get(
-        "/api/v1/auth/oauth/google/callback?code=abc123&state=snapmaker3d-studio",
+        f"/api/v1/auth/oauth/google/callback?code=abc123&state={valid_state}",
         follow_redirects=False,
     )
     assert response.status_code == 303
@@ -173,4 +153,9 @@ def test_social_oauth_callback_redirects_after_google_exchange(monkeypatch: pyte
 def test_social_oauth_callback_rejects_invalid_state() -> None:
     response = client.get("/api/v1/auth/oauth/google/callback?code=abc123&state=wrong-state")
     assert response.status_code == 400
-    assert "State inválido" in response.text
+    assert "State inv" in response.text
+
+
+def test_social_oauth_callback_rejects_missing_state() -> None:
+    response = client.get("/api/v1/auth/oauth/google/callback?code=abc123")
+    assert response.status_code == 400

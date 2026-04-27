@@ -3,12 +3,16 @@
 import Link from "next/link";
 
 import { AppShell } from "@/components/app-shell";
+import { useAuth } from "@/components/auth-provider";
+import { AccessDeniedPanel } from "@/components/permission-gate";
 import { ProjectQueuePanel } from "@/components/project-queue-panel";
 import { StatusBadge } from "@/components/status-badge";
 import { useProjects } from "@/hooks/use-projects";
+import { PERMISSIONS } from "@/lib/permissions";
 import { buildProjectMetrics, latestProjects } from "@/lib/project-metrics";
 
 export default function QueuePage() {
+  const { can } = useAuth();
   const { error, loading, projects } = useProjects();
   const metrics = buildProjectMetrics(projects);
   const activeItems = projects.filter((project) => ["uploaded", "processing", "awaiting_user", "failed"].includes(project.status));
@@ -20,6 +24,11 @@ export default function QueuePage() {
       title="Fila de processamento"
       subtitle="Acompanhe projetos em andamento, falhas e itens que precisam de resposta antes da exportação final."
     >
+      {!can(PERMISSIONS.queueView) ? (
+        <div className="portal-stack">
+          <AccessDeniedPanel description="Seu perfil não possui acesso à fila operacional." />
+        </div>
+      ) : (
       <div className="portal-stack">
         <ProjectQueuePanel metrics={metrics} />
 
@@ -68,6 +77,7 @@ export default function QueuePage() {
           </div>
         </section>
       </div>
+      )}
     </AppShell>
   );
 }

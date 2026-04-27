@@ -2,7 +2,6 @@ from pathlib import Path
 import sys
 from urllib.parse import urlparse
 
-sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.services.project_service import ProjectService
 

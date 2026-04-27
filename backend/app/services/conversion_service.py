@@ -106,35 +106,22 @@ M84
         lost = ["equivalencias exatas de slicing/profiles proprietarios nao garantidas nesta versao base"]
 
         if zipfile.is_zipfile(source_file):
-            if source_file.stat().st_size >= 20 * 1024 * 1024 and self._archive_has_plate_metadata_file(source_file):
-                sanitized = self._stream_copy_large_plate_archive(
+            if self._should_preserve_bambu_archive(source_file):
+                # Para pacotes Bambu reais priorizamos fidelidade total do layout e estabilidade.
+                sanitized = self._stream_copy_archive_safe(
                     source_file,
                     destination,
                     support_plan=support_plan,
                     adhesion_plan=adhesion_plan,
                 )
-                adapted.extend(sanitized["adapted"])
-                lost.extend(sanitized["lost"])
-                extra_output_files = sanitized.get("extra_output_files", [])
-                parameter_equivalence = sanitized.get("parameter_equivalence", [])
-                return {
-                    "status": "partial",
-                    "output_file": str(destination),
-                    "extra_output_files": extra_output_files,
-                    "preserved": preserved,
-                    "adapted": adapted,
-                    "lost": lost,
-                    "support_plan": support_plan or {"enabled": False, "reason": "not_provided"},
-                    "adhesion_plan": adhesion_plan or {"mode": "skirt", "reason": "not_provided"},
-                    "parameter_equivalence": parameter_equivalence,
-                }
-            sanitized = self._sanitize_project_archive(
-                source_file,
-                destination,
-                support_plan=support_plan,
-                adhesion_plan=adhesion_plan,
-                scale_mode=scale_mode,
-            )
+            else:
+                sanitized = self._sanitize_project_archive(
+                    source_file,
+                    destination,
+                    support_plan=support_plan,
+                    adhesion_plan=adhesion_plan,
+                    scale_mode=scale_mode,
+                )
             adapted.extend(sanitized["adapted"])
             lost.extend(sanitized["lost"])
             extra_output_files = sanitized.get("extra_output_files", [])
@@ -156,6 +143,70 @@ M84
             "parameter_equivalence": parameter_equivalence,
         }
 
+    def _should_preserve_bambu_archive(self, source_file: Path) -> bool:
+        try:
+            with zipfile.ZipFile(source_file, "r") as archive:
+                names = [info.filename.replace("\\", "/").lower() for info in archive.infolist()]
+        except Exception:
+            return False
+
+        if "metadata/model_settings.config" in names:
+            return True
+        if any(name.startswith("metadata/plate") for name in names):
+            return True
+        if any("bambu" in name for name in names):
+            return True
+        if any(name.startswith("metadata/filament") for name in names):
+            return True
+        return False
+
+    def _stream_copy_archive_safe(
+        self,
+        source_file: Path,
+        destination: Path,
+        *,
+        support_plan: dict[str, Any] | None = None,
+        adhesion_plan: dict[str, Any] | None = None,
+    ) -> dict[str, list[str] | list[dict[str, Any]]]:
+        adapted: list[str] = []
+        lost: list[str] = []
+        parameter_equivalence: list[dict[str, Any]] = []
+
+        with zipfile.ZipFile(source_file, "r") as source_zip, zipfile.ZipFile(destination, "w") as destination_zip:
+            for info in source_zip.infolist():
+                if info.filename == "Metadata/project_settings.config":
+                    try:
+                        settings = json.loads(source_zip.read(info.filename).decode("utf-8"))
+                        settings, applied, equivalence = self._sanitize_project_settings(
+                            settings,
+                            support_plan=support_plan,
+                            adhesion_plan=adhesion_plan,
+                        )
+                        adapted.extend(applied)
+                        parameter_equivalence.extend(equivalence)
+                        destination_zip.writestr(
+                            info.filename,
+                            json.dumps(settings, indent=4, ensure_ascii=False).encode("utf-8"),
+                        )
+                    except Exception:
+                        lost.append(
+                            "sanitizacao automatica de project_settings.config falhou; configuracao original foi preservada"
+                        )
+                        self._copy_zip_entry_streaming(source_zip, destination_zip, info)
+                    continue
+
+                self._copy_zip_entry_streaming(source_zip, destination_zip, info)
+
+        adapted.append(
+            "Pacote 3MF/ZIP preservado em streaming com layout original (plates/posicionamento/cores), reduzindo risco de travamento."
+        )
+        return {
+            "adapted": adapted,
+            "lost": lost,
+            "extra_output_files": [],
+            "parameter_equivalence": parameter_equivalence,
+        }
+
     def _archive_has_plate_metadata_file(self, source_file: Path) -> bool:
         try:
             with zipfile.ZipFile(source_file, "r") as source_zip:
@@ -167,7 +218,7 @@ M84
         except Exception:
             return False
 
-    def _stream_copy_large_plate_archive(
+    def _stream_copy_plate_archive(
         self,
         source_file: Path,
         destination: Path,
@@ -202,7 +253,7 @@ M84
                 self._copy_zip_entry_streaming(source_zip, destination_zip, info)
 
         adapted.append(
-            "Pacote 3MF grande com plates foi preservado em streaming para evitar travamento por memória no ambiente publicado."
+            "Pacote 3MF com plates foi preservado em streaming para evitar travamento por memória e manter layout original."
         )
         return {
             "adapted": adapted,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 import json
 import logging
@@ -89,7 +90,7 @@ class StorageService:
         return destination
 
     async def save_upload(self, upload: UploadFile, target_dir: Path) -> Path:
-        return self.save_upload_sync(upload, target_dir)
+        return await asyncio.to_thread(self.save_upload_sync, upload, target_dir)
 
     def unique_upload_path(self, destination: Path) -> Path:
         if not destination.exists():
@@ -105,7 +106,7 @@ class StorageService:
         return saved
 
     async def save_uploads(self, uploads: list[UploadFile], target_dir: Path) -> list[Path]:
-        return self.save_uploads_sync(uploads, target_dir)
+        return await asyncio.to_thread(self.save_uploads_sync, uploads, target_dir)
 
     def write_json(self, path: Path, payload: dict[str, Any]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -127,18 +128,26 @@ class StorageService:
             index += 1
 
     def read_json(self, path: Path) -> dict[str, Any]:
+        # FileNotFoundError: não há retry — o arquivo não existe
+        # JSONDecodeError: pode ser race condition de escrita; retry até 3x com backoff curto
+        if not path.exists():
+            raise FileNotFoundError(f"Arquivo não encontrado: {path}")
         last_error: Exception | None = None
-        for _ in range(4):
+        for attempt in range(3):
             try:
                 return json.loads(path.read_text(encoding="utf-8"))
-            except (FileNotFoundError, json.JSONDecodeError) as exc:
+            except json.JSONDecodeError as exc:
                 last_error = exc
-                time.sleep(0.05)
+                if attempt < 2:
+                    time.sleep(0.02 * (attempt + 1))
         assert last_error is not None
         raise last_error
 
     def manifest_path(self, project_root: Path) -> Path:
         return project_root / "project.json"
+
+    def summary_path(self, project_root: Path) -> Path:
+        return project_root / "project.summary.json"
 
     def to_storage_url(self, path: Path | str) -> str:
         file_path = Path(path)
@@ -146,8 +155,9 @@ class StorageService:
         return f"/storage/{relative.as_posix()}"
 
     def save_manifest(self, manifest: dict[str, Any]) -> None:
-        path = Path(manifest["storage_path"]) / "project.json"
-        self.write_json(path, manifest)
+        project_root = Path(manifest["storage_path"])
+        self.write_json(self.manifest_path(project_root), manifest)
+        self.write_json(self.summary_path(project_root), self.build_project_summary(manifest))
 
     def save_project_manifest(self, project_root: Path, payload: dict[str, Any]) -> None:
         self.write_json(project_root / "project_manifest.json", payload)
@@ -182,20 +192,51 @@ class StorageService:
 
     def list_manifests(self) -> list[dict[str, Any]]:
         manifests: list[dict[str, Any]] = []
-        for manifest in self.root.glob("*/*/project.json"):
+        for project_dir in self.root.glob("*/*"):
+            if not project_dir.is_dir():
+                continue
+            summary_file = self.summary_path(project_dir)
+            manifest_file = self.manifest_path(project_dir)
+            source = summary_file if summary_file.exists() else manifest_file
+            if not source.exists():
+                continue
             try:
-                manifests.append(self.normalize_manifest_paths(self.read_json(manifest), manifest.parent))
+                payload = self.read_json(source)
+                if source == manifest_file:
+                    payload = self.build_project_summary(payload)
+                    self.write_json(summary_file, payload)
+                manifests.append(payload)
             except Exception as exc:
                 logger.exception(
                     "manifest_load_failed",
                     extra={
-                        "manifest_path": str(manifest),
-                        "project_root": str(manifest.parent),
+                        "manifest_path": str(source),
+                        "project_root": str(project_dir),
                     },
                 )
                 continue
-        manifests.sort(key=lambda item: item["updated_at"], reverse=True)
+        manifests.sort(key=lambda item: str(item.get("updated_at", "")), reverse=True)
         return manifests
+
+    def build_project_summary(self, manifest: dict[str, Any]) -> dict[str, Any]:
+        printable_score = manifest.get("printable_score")
+        if not isinstance(printable_score, dict):
+            printable_score = None
+        summary = {
+            "id": manifest.get("id"),
+            "name": manifest.get("name"),
+            "slug": manifest.get("slug"),
+            "version": manifest.get("version"),
+            "status": manifest.get("status"),
+            "input_format": manifest.get("input_format"),
+            "source_ecosystem": manifest.get("source_ecosystem"),
+            "created_at": manifest.get("created_at"),
+            "updated_at": manifest.get("updated_at"),
+            "preview_url": manifest.get("preview_url"),
+            "printable_score": printable_score,
+            "sales_profile": None,
+        }
+        return summary
 
     def normalize_manifest_paths(self, manifest: dict[str, Any], project_root: Path) -> dict[str, Any]:
         manifest["storage_path"] = str(project_root)

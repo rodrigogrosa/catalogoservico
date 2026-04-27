@@ -1,4 +1,6 @@
+from datetime import datetime, timezone
 from pathlib import Path
+from time import perf_counter
 
 from fastapi import APIRouter, HTTPException
 
@@ -9,12 +11,35 @@ from app.services.snapmaker_profile_service import SnapmakerProfileService
 
 router = APIRouter()
 
+# Cache simples para evitar I/O externo a cada health check do load balancer
+_llm_cache: dict[str, object] = {}
+_LLM_CACHE_TTL_SECONDS = 60
+
 
 @router.get("/health")
 async def health() -> dict[str, object]:
+    """Health check leve — sem I/O externo. Usado pelo load balancer e Docker healthcheck."""
     settings = get_settings()
-    llm = LocalLlmService(settings=settings)
+    return {
+        "status": "ok",
+        "environment": settings.app_env,
+        "pipeline_version": settings.pipeline_version,
+        "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+    }
+
+
+@router.get("/health/full")
+async def health_full() -> dict[str, object]:
+    """Health check completo com status do LLM e perfil Snapmaker. Sob demanda."""
+    settings = get_settings()
     profile = SnapmakerProfileService().load_profile()
+
+    now = perf_counter()
+    if (now - float(_llm_cache.get("_ts", 0))) > _LLM_CACHE_TTL_SECONDS:
+        llm = LocalLlmService(settings=settings)
+        _llm_cache["runtime"] = llm.describe_runtime()
+        _llm_cache["_ts"] = now
+
     return {
         "status": "ok",
         "environment": settings.app_env,
@@ -22,7 +47,8 @@ async def health() -> dict[str, object]:
         "snapmaker_profile": settings.snapmaker_profile_name,
         "pipeline_version": settings.pipeline_version,
         "slicer_target": profile["slicer_target"],
-        "llm_runtime": llm.describe_runtime(),
+        "llm_runtime": _llm_cache.get("runtime"),
+        "timestamp": datetime.now(tz=timezone.utc).isoformat(),
     }
 
 

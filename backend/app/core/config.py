@@ -2,68 +2,87 @@ from functools import lru_cache
 from pathlib import Path
 import os
 
-from pydantic import BaseModel, Field
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-class Settings(BaseModel):
-    app_env: str = Field(default_factory=lambda: os.getenv("APP_ENV", "development"))
-    pipeline_version: str = Field(default_factory=lambda: os.getenv("PIPELINE_VERSION", "0.3.0"))
-    backend_host: str = Field(default_factory=lambda: os.getenv("BACKEND_HOST", "0.0.0.0"))
-    backend_port: int = Field(default_factory=lambda: int(os.getenv("BACKEND_PORT", "8000")))
-    allowed_origins: list[str] = Field(
-        default_factory=lambda: [
-            origin.strip()
-            for origin in os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
-            if origin.strip()
-        ]
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        case_sensitive=False,
     )
-    storage_root: Path = Field(
-        default_factory=lambda: Path(os.getenv("SNAPMAKER_STORAGE_ROOT", str(Path.home() / "Downloads" / "Projetos3d" / "SnapMaker3d")))
+
+    app_env: str = "development"
+    pipeline_version: str = "0.3.0"
+    backend_host: str = "0.0.0.0"
+    backend_port: int = 8000
+    allowed_origins_raw: str = Field(
+        default="http://localhost:3000,http://127.0.0.1:3000",
+        alias="ALLOWED_ORIGINS",
     )
-    snapmaker_profile_name: str = Field(default_factory=lambda: os.getenv("SNAPMAKER_PROFILE_NAME", "Snapmaker U1 (perfil conservador)"))
-    snapmaker_build_volume_x_mm: float = Field(default_factory=lambda: float(os.getenv("SNAPMAKER_BUILD_VOLUME_X_MM", "270")))
-    snapmaker_build_volume_y_mm: float = Field(default_factory=lambda: float(os.getenv("SNAPMAKER_BUILD_VOLUME_Y_MM", "270")))
-    snapmaker_build_volume_z_mm: float = Field(default_factory=lambda: float(os.getenv("SNAPMAKER_BUILD_VOLUME_Z_MM", "270")))
-    max_upload_size_mb: int = Field(default_factory=lambda: int(os.getenv("MAX_UPLOAD_SIZE_MB", "1024")))
-    max_project_files: int = Field(default_factory=lambda: int(os.getenv("MAX_PROJECT_FILES", "32")))
-    max_zip_entries: int = Field(default_factory=lambda: int(os.getenv("MAX_ZIP_ENTRIES", "500")))
-    max_zip_depth: int = Field(default_factory=lambda: int(os.getenv("MAX_ZIP_DEPTH", "8")))
-    max_archive_xml_probe_bytes: int = Field(default_factory=lambda: int(os.getenv("MAX_ARCHIVE_XML_PROBE_BYTES", str(8 * 1024 * 1024))))
-    max_triangles: int = Field(default_factory=lambda: int(os.getenv("MAX_TRIANGLES", "3000000")))
-    stage_timeout_seconds: int = Field(default_factory=lambda: int(os.getenv("STAGE_TIMEOUT_SECONDS", "300")))
-    ollama_enabled: bool = Field(default_factory=lambda: os.getenv("OLLAMA_ENABLED", "true").lower() in {"1", "true", "yes", "on"})
-    ollama_base_url: str = Field(default_factory=lambda: os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434"))
-    ollama_model: str = Field(default_factory=lambda: os.getenv("OLLAMA_MODEL", "qwen2.5:7b"))
-    ollama_vision_model: str = Field(default_factory=lambda: os.getenv("OLLAMA_VISION_MODEL", ""))
-    ollama_timeout_seconds: float = Field(default_factory=lambda: float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "45")))
-    free_ai_enabled: bool = Field(default_factory=lambda: os.getenv("FREE_AI_ENABLED", "true").lower() in {"1", "true", "yes", "on"})
-    free_ai_external_enabled: bool = Field(default_factory=lambda: os.getenv("FREE_AI_EXTERNAL_ENABLED", "false").lower() in {"1", "true", "yes", "on"})
-    free_ai_provider_order: str = Field(default_factory=lambda: os.getenv("FREE_AI_PROVIDER_ORDER", "ollama,pollinations,huggingface"))
-    ai_generation_timeout_seconds: float = Field(default_factory=lambda: float(os.getenv("AI_GENERATION_TIMEOUT_SECONDS", "6")))
-    pollinations_image_model: str = Field(default_factory=lambda: os.getenv("POLLINATIONS_IMAGE_MODEL", "flux"))
-    pollinations_text_model: str = Field(default_factory=lambda: os.getenv("POLLINATIONS_TEXT_MODEL", "openai-large"))
-    huggingface_api_token: str = Field(default_factory=lambda: os.getenv("HUGGINGFACE_API_TOKEN", ""))
-    huggingface_text_model: str = Field(default_factory=lambda: os.getenv("HUGGINGFACE_TEXT_MODEL", "mistralai/Mistral-7B-Instruct-v0.3"))
-    huggingface_image_model: str = Field(default_factory=lambda: os.getenv("HUGGINGFACE_IMAGE_MODEL", "stabilityai/stable-diffusion-xl-base-1.0"))
-    master_username: str = Field(default_factory=lambda: os.getenv("MASTER_USERNAME", "rodrigogrosa"))
-    master_password: str = Field(default_factory=lambda: os.getenv("MASTER_PASSWORD", "Violao2021@"))
-    master_password_aliases: list[str] = Field(
-        default_factory=lambda: [
-            password.strip()
-            for password in os.getenv("MASTER_PASSWORD_ALIASES", "Vilao2021@").split(",")
-            if password.strip()
-        ]
+    snapmaker_storage_root: str = Field(
+        default="",
+        alias="SNAPMAKER_STORAGE_ROOT",
     )
-    auth_token_secret: str = Field(default_factory=lambda: os.getenv("AUTH_TOKEN_SECRET", "snapmaker3d-local-dev-secret"))
-    auth_token_ttl_hours: int = Field(default_factory=lambda: int(os.getenv("AUTH_TOKEN_TTL_HOURS", "12")))
-    google_oauth_client_id: str = Field(default_factory=lambda: os.getenv("GOOGLE_OAUTH_CLIENT_ID", ""))
-    google_oauth_redirect_uri: str = Field(default_factory=lambda: os.getenv("GOOGLE_OAUTH_REDIRECT_URI", ""))
-    apple_oauth_client_id: str = Field(default_factory=lambda: os.getenv("APPLE_OAUTH_CLIENT_ID", ""))
-    apple_oauth_redirect_uri: str = Field(default_factory=lambda: os.getenv("APPLE_OAUTH_REDIRECT_URI", ""))
-    instagram_oauth_client_id: str = Field(default_factory=lambda: os.getenv("INSTAGRAM_OAUTH_CLIENT_ID", ""))
-    instagram_oauth_redirect_uri: str = Field(default_factory=lambda: os.getenv("INSTAGRAM_OAUTH_REDIRECT_URI", ""))
-    public_backend_origin: str = Field(default_factory=lambda: os.getenv("PUBLIC_BACKEND_ORIGIN", "http://127.0.0.1:8010"))
-    public_frontend_origin: str = Field(default_factory=lambda: os.getenv("PUBLIC_FRONTEND_ORIGIN", "http://127.0.0.1:3000"))
+    snapmaker_profile_name: str = "Snapmaker U1 (perfil conservador)"
+    snapmaker_build_volume_x_mm: float = 270.0
+    snapmaker_build_volume_y_mm: float = 270.0
+    snapmaker_build_volume_z_mm: float = 270.0
+    max_upload_size_mb: int = 1024
+    max_project_files: int = 32
+    max_project_previews: int = 5
+    max_zip_entries: int = 500
+    max_zip_depth: int = 8
+    max_archive_xml_probe_bytes: int = 8 * 1024 * 1024
+    max_triangles: int = 3_000_000
+    stage_timeout_seconds: int = 300
+    processing_stale_seconds: int = 900
+    ollama_enabled: bool = True
+    ollama_base_url: str = "http://127.0.0.1:11434"
+    ollama_model: str = "qwen2.5:7b"
+    ollama_vision_model: str = ""
+    ollama_timeout_seconds: float = 45.0
+    free_ai_enabled: bool = True
+    free_ai_external_enabled: bool = False
+    free_ai_provider_order: str = "ollama,pollinations,huggingface"
+    ai_generation_timeout_seconds: float = 6.0
+    pollinations_image_model: str = "flux"
+    pollinations_text_model: str = "openai-large"
+    huggingface_api_token: str = ""
+    huggingface_text_model: str = "mistralai/Mistral-7B-Instruct-v0.3"
+    huggingface_image_model: str = "stabilityai/stable-diffusion-xl-base-1.0"
+    # --- Credenciais sensíveis: obrigatório setar via env var em produção ---
+    master_username: str = "admin"
+    master_display_name: str = Field(default="Administrador", alias="MASTER_DISPLAY_NAME")
+    master_password: str = ""
+    master_password_aliases_raw: str = Field(default="", alias="MASTER_PASSWORD_ALIASES")
+    auth_token_secret: str = "snapmaker3d-local-dev-secret-change-in-prod"
+    auth_token_ttl_hours: int = 12
+    google_oauth_client_id: str = ""
+    google_oauth_redirect_uri: str = ""
+    apple_oauth_client_id: str = ""
+    apple_oauth_redirect_uri: str = ""
+    instagram_oauth_client_id: str = ""
+    instagram_oauth_redirect_uri: str = ""
+    public_backend_origin: str = "http://127.0.0.1:8010"
+    public_frontend_origin: str = "http://127.0.0.1:3000"
+
+    @property
+    def storage_root(self) -> Path:
+        raw = self.snapmaker_storage_root
+        if raw:
+            return Path(raw)
+        return Path.home() / "Downloads" / "Projetos3d" / "SnapMaker3d"
+
+    @property
+    def allowed_origins(self) -> list[str]:
+        return [o.strip() for o in self.allowed_origins_raw.split(",") if o.strip()]
+
+    @property
+    def master_password_aliases(self) -> list[str]:
+        return [p.strip() for p in self.master_password_aliases_raw.split(",") if p.strip()]
 
 
 @lru_cache

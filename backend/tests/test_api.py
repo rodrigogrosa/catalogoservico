@@ -6,7 +6,6 @@ from time import perf_counter
 
 from fastapi.testclient import TestClient
 
-sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.core.config import get_settings
 from app.main import app
@@ -21,7 +20,9 @@ def test_health_endpoint() -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["status"] == "ok"
-    assert "llm_runtime" in payload
+    # /health is now lightweight — no llm_runtime (use /health/full for that)
+    assert "pipeline_version" in payload
+    assert "timestamp" in payload
 
 
 def test_readiness_endpoint() -> None:
@@ -39,17 +40,12 @@ def test_root_endpoint() -> None:
     assert response.headers["x-request-id"]
 
 
-def test_authenticated_upload_returns_request_id() -> None:
-    login = client.post(
-        "/api/v1/auth/login",
-        json={"username": "rodrigogrosa", "password": "Violao2021@"},
-    )
-    token = login.json()["access_token"]
+def test_authenticated_upload_returns_request_id(auth_headers: dict) -> None:
     stl_payload = b"0" * 80 + (0).to_bytes(4, "little")
 
     response = client.post(
         "/api/v1/projects/upload",
-        headers={"Authorization": f"Bearer {token}"},
+        headers=auth_headers,
         files={"files": ("sample.stl", stl_payload, "application/sla")},
         data={"project_name": "Upload Test"},
     )
@@ -57,16 +53,13 @@ def test_authenticated_upload_returns_request_id() -> None:
     assert response.headers["x-request-id"]
     payload = response.json()
     assert payload["id"].startswith("upload-test_v")
-    shutil.rmtree(Path(payload["storage_path"]), ignore_errors=True)
-    project_parent = Path(payload["storage_path"]).parent
-    if project_parent.exists() and not any(project_parent.iterdir()):
-        project_parent.rmdir()
+    # Sem cleanup manual — isolated_storage fixture (conftest.py) usa tmp_path
 
 
-def test_login_survives_while_large_upload_is_processing(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("SNAPMAKER_STORAGE_ROOT", str(tmp_path))
-    get_settings.cache_clear()
-
+def test_login_survives_while_large_upload_is_processing(
+    master_credentials: dict[str, str],
+    monkeypatch,
+) -> None:
     upload_started = Event()
     release_upload = Event()
     original = ProjectService.create_project_from_saved_files
@@ -81,12 +74,10 @@ def test_login_survives_while_large_upload_is_processing(tmp_path: Path, monkeyp
     upload_client = TestClient(app)
     login_client = TestClient(app)
 
-    login = login_client.post(
-        "/api/v1/auth/login",
-        json={"username": "rodrigogrosa", "password": "Violao2021@"},
-    )
+    login = login_client.post("/api/v1/auth/login", json=master_credentials)
     token = login.json()["access_token"]
-    large_stl_payload = b"0" * 80 + (0).to_bytes(4, "little") + (b"x" * (42 * 1024 * 1024))
+    # Usa bytes menores para não alocar 42 MB em memória no processo de teste
+    large_stl_payload = b"0" * 80 + (0).to_bytes(4, "little") + (b"x" * (512 * 1024))
     upload_response: dict[str, object] = {}
 
     def do_upload() -> None:
@@ -102,10 +93,7 @@ def test_login_survives_while_large_upload_is_processing(tmp_path: Path, monkeyp
     assert upload_started.wait(timeout=2)
 
     started_at = perf_counter()
-    second_login = login_client.post(
-        "/api/v1/auth/login",
-        json={"username": "rodrigogrosa", "password": "Violao2021@"},
-    )
+    second_login = login_client.post("/api/v1/auth/login", json=master_credentials)
     duration_seconds = perf_counter() - started_at
 
     release_upload.set()
@@ -117,11 +105,3 @@ def test_login_survives_while_large_upload_is_processing(tmp_path: Path, monkeyp
     response = upload_response.get("response")
     assert response is not None
     assert response.status_code == 200
-
-    payload = response.json()
-    shutil.rmtree(Path(payload["storage_path"]), ignore_errors=True)
-    project_parent = Path(payload["storage_path"]).parent
-    if project_parent.exists() and not any(project_parent.iterdir()):
-        project_parent.rmdir()
-
-    get_settings.cache_clear()

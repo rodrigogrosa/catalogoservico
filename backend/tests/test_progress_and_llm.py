@@ -1,7 +1,6 @@
 from pathlib import Path
 import sys
 
-sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.schemas.project import ProcessProjectRequest
 from app.services.agents.llm_strategy_agent import LlmStrategyAgent

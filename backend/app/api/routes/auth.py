@@ -1,9 +1,13 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Path, status
+import hashlib
+import hmac
+import time
+
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Path, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from app.core.auth import require_current_user, require_permission
+from app.core.auth import get_auth_service, require_current_user, require_permission
 from app.schemas.auth import (
     AccessModelResponse,
     AuthUser,
@@ -20,8 +24,33 @@ from app.services.auth_service import AuthService
 router = APIRouter()
 
 
-def get_auth_service() -> AuthService:
-    return AuthService()
+def _make_oauth_state(provider: str, secret: str) -> str:
+    """Gera um state HMAC-assinado com timestamp para prevenção de CSRF."""
+    ts = str(int(time.time()))
+    raw = f"{provider}:{ts}"
+    sig = hmac.new(secret.encode(), raw.encode(), hashlib.sha256).hexdigest()[:16]
+    return f"{raw}:{sig}"
+
+
+def _verify_oauth_state(state: str | None, provider: str, secret: str, max_age_seconds: int = 600) -> bool:
+    """Valida state HMAC-assinado. Rejeita ausente, malformado, expirado ou com assinatura inválida."""
+    if not state:
+        return False
+    parts = state.split(":")
+    if len(parts) != 3:
+        return False
+    state_provider, ts_str, sig = parts
+    if state_provider != provider:
+        return False
+    try:
+        ts = int(ts_str)
+    except ValueError:
+        return False
+    if int(time.time()) - ts > max_age_seconds:
+        return False
+    raw = f"{state_provider}:{ts_str}"
+    expected_sig = hmac.new(secret.encode(), raw.encode(), hashlib.sha256).hexdigest()[:16]
+    return hmac.compare_digest(sig, expected_sig)
 
 
 @router.post("/login", response_model=LoginResponse)
@@ -81,7 +110,7 @@ async def social_oauth_callback(
     error: str | None = None,
     service: AuthService = Depends(get_auth_service),
 ):
-    expected_state = "snapmaker3d-studio"
+    secret = service.settings.auth_token_secret
 
     if error:
         html = service.callback_error_html(
@@ -94,11 +123,11 @@ async def social_oauth_callback(
         )
         return HTMLResponse(html, status_code=400)
 
-    if state and state != expected_state:
+    if not _verify_oauth_state(state, provider, secret):
         html = service.callback_error_html(
             provider,
-            "State inválido",
-            "O state retornado pelo provedor não corresponde ao valor esperado pelo sistema.",
+            "State inválido ou expirado",
+            "O parâmetro state ausente, expirado ou inválido. Inicie o fluxo OAuth novamente.",
             code=code,
             state=state,
             status_code=400,
@@ -140,3 +169,4 @@ async def social_oauth_callback(
         status_code=400,
     )
     return HTMLResponse(html, status_code=400)
+

@@ -360,6 +360,11 @@ function apiBase(): string {
       ?? `${backendOrigin()}/api/v1`;
   }
 
+  const directOrigin = inferBrowserBackendOrigin()
+    ?? normalizeOrigin(process.env.NEXT_PUBLIC_BACKEND_ORIGIN);
+  if (directOrigin) {
+    return `${directOrigin}/api/v1`;
+  }
   return "/api/v1";
 }
 
@@ -718,6 +723,13 @@ export async function fetchProjectBundle(id: string): Promise<ArtifactReference>
   if (!response.ok) throw await parseApiError(response, "Falha ao gerar bundle");
   const data = await response.json();
   return data.bundle;
+}
+
+export async function fetchProjectPrintFile(id: string): Promise<ArtifactReference> {
+  const response = await apiFetchResilient(`/projects/${id}/print-file`, { cache: "no-store", headers: authHeaders() });
+  if (!response.ok) throw await parseApiError(response, "Falha ao localizar arquivo final para impressão");
+  const data = await response.json();
+  return data.print_file;
 }
 
 export async function compareProjects(baseId: string, otherId: string): Promise<ProjectCompareResponse> {

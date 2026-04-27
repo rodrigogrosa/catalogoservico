@@ -610,6 +610,7 @@ class StoreService:
         ]
         raw_paths = marketplace_paths or [project.get("preview_url")] + [item.get("path") for item in previews]
         candidate_bases = self.image_base_url_candidates(image_base_url, store)
+        primary_base = candidate_bases[0] if candidate_bases else self.settings.public_backend_origin.rstrip("/")
         public_paths: list[str] = []
         for raw_path in raw_paths:
             if not raw_path:
@@ -618,11 +619,12 @@ class StoreService:
             if not path.lower().split("?")[0].endswith((".png", ".jpg", ".jpeg", ".webp")):
                 continue
             if path.startswith("http"):
-                public_paths.append(path)
+                if self.is_public_http_image(path):
+                    public_paths.append(path)
                 continue
-            for base in candidate_bases:
-                public_paths.append(f"{base.rstrip('/')}{path}")
-        return list(dict.fromkeys(public_paths))
+            public_paths.append(f"{primary_base}{path}")
+        unique = list(dict.fromkeys(public_paths))
+        return unique[: max(1, int(self.settings.max_project_previews))]
 
     def resolve_local_product_images(self, project: dict[str, Any]) -> list[str]:
         previews = list(project.get("previews", []) or [])
@@ -654,6 +656,11 @@ class StoreService:
             candidates.append(self.settings.public_backend_origin.rstrip("/"))
         candidates.append("https://api.euachei3d.com.br")
         return list(dict.fromkeys(candidate for candidate in candidates if candidate))
+
+    def is_public_http_image(self, url: str) -> bool:
+        lowered = url.lower()
+        blocked_hosts = ("127.0.0.1", "localhost", "0.0.0.0")
+        return not any(host in lowered for host in blocked_hosts)
 
     def next_steps(self, connector: MarketplaceConnector, blockers: list[str]) -> list[str]:
         steps = ["Revise o payload gerado na tela antes de publicar."]
@@ -1034,6 +1041,7 @@ class StoreService:
         max_pictures = self.fetch_mercado_livre_max_pictures(category_id)
         if max_pictures <= 0:
             max_pictures = 12
+        max_pictures = min(max_pictures, max(1, int(self.settings.max_project_previews)))
         return images[:max_pictures]
 
     def fetch_mercado_livre_max_pictures(self, category_id: str) -> int:

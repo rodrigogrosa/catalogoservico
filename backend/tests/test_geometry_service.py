@@ -2,7 +2,6 @@ from pathlib import Path
 import sys
 from zipfile import ZIP_DEFLATED, ZipFile
 
-sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.services.mesh_analysis_service import MeshAnalysisService
 

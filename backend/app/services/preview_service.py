@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
+import re
 import shutil
+from urllib.parse import urlparse
 import zipfile
 
 import numpy as np
@@ -15,10 +18,15 @@ class PreviewService:
     PREVIEWABLE_EXTENSIONS = {"stl", "obj"}
     ARCHIVE_IMAGE_HINTS = ("plate", "top", "pick", "preview", "thumbnail")
     MAIN_PREVIEW_PRIORITIES = ("thumbnail", "preview", "plate_1", "plate", "top_1", "top", "pick")
+    LOW_VALUE_HINTS = ("small", "thumbnail_small", "thumbnail_middle", "plate_no_light")
     MARKETPLACE_IMAGE_SIZE = 1600
     MARKETPLACE_LABEL_PREFIX = "marketplace_"
     MARKETPLACE_REJECT_HINTS = ("small", "thumbnail_3mf")
     MARKETPLACE_FAMILY_PRIORITIES = ("plate", "pick", "top", "thumbnail", "preview", "generic")
+    MAX_ARCHIVE_PREVIEW_CANDIDATES = 24
+    DEFAULT_MAX_PROJECT_PREVIEWS = 5
+    MAX_MARKETPLACE_SOURCE_CANDIDATES = 12
+    MAX_DIMENSION_INFER_FILE_BYTES = 8 * 1024 * 1024
 
     def build_preview_url(self, file_path: Path, storage_root: Path) -> str | None:
         extension = file_path.suffix.lower().lstrip(".")
@@ -57,6 +65,7 @@ class PreviewService:
                     if Path(name).suffix.lower() in IMAGE_EXTENSIONS
                     and any(hint in Path(name).name.lower() for hint in self.ARCHIVE_IMAGE_HINTS)
                 ]
+                candidates = sorted(candidates, key=self.archive_candidate_sort_key)[: self.MAX_ARCHIVE_PREVIEW_CANDIDATES]
                 for name in candidates:
                     target = previews_dir / f"{label_prefix}_{Path(name).name}"
                     target = self._unique_path(target)
@@ -66,6 +75,81 @@ class PreviewService:
             return []
 
         return assets
+
+    def curate_project_previews(
+        self,
+        previews: list[dict[str, str]],
+        storage_root: Path,
+        *,
+        max_items: int = DEFAULT_MAX_PROJECT_PREVIEWS,
+    ) -> list[dict[str, str]]:
+        if max_items <= 0:
+            return []
+
+        deduped_by_path: dict[str, dict[str, str]] = {}
+        for preview in previews:
+            path = str(preview.get("path") or "").strip()
+            if not path:
+                continue
+            if not self.is_image_path(path):
+                continue
+            deduped_by_path[path] = preview
+        if not deduped_by_path:
+            return []
+
+        scored: list[dict[str, object]] = []
+        for preview in deduped_by_path.values():
+            local_path = self.resolve_local_preview_path(str(preview.get("path") or ""), storage_root)
+            score = self.preview_asset_score(preview, local_path)
+            scored.append(
+                {
+                    "preview": preview,
+                    "score": score,
+                    "digest": self.preview_digest(local_path),
+                    "signature": self.preview_signature(preview, local_path),
+                }
+            )
+
+        scored.sort(key=lambda item: (-float(item["score"]), str((item["preview"] or {}).get("label", "")).lower()))
+        selected: list[dict[str, str]] = []
+        seen_digests: set[str] = set()
+        seen_signatures: set[str] = set()
+        for item in scored:
+            preview = item["preview"]
+            digest = str(item.get("digest") or "")
+            signature = str(item.get("signature") or "")
+            if digest and digest in seen_digests:
+                continue
+            if signature and signature in seen_signatures:
+                continue
+            selected.append(preview)  # type: ignore[arg-type]
+            if digest:
+                seen_digests.add(digest)
+            if signature:
+                seen_signatures.add(signature)
+            if len(selected) >= max_items:
+                break
+
+        if selected:
+            return selected
+        return [list(deduped_by_path.values())[0]]
+
+    def prune_preview_directory(self, previews_dir: Path, curated_previews: list[dict[str, str]], storage_root: Path) -> None:
+        if not previews_dir.exists():
+            return
+        keep_paths: set[Path] = set()
+        for preview in curated_previews:
+            local_path = self.resolve_local_preview_path(str(preview.get("path") or ""), storage_root)
+            if local_path is not None:
+                keep_paths.add(local_path.resolve())
+        for file_path in previews_dir.iterdir():
+            if not file_path.is_file():
+                continue
+            if file_path.suffix.lower() not in IMAGE_EXTENSIONS:
+                continue
+            if file_path.resolve() in keep_paths:
+                continue
+            file_path.unlink(missing_ok=True)
 
     def collect_existing_previews(self, previews_dir: Path, storage_root: Path) -> list[dict[str, str]]:
         if not previews_dir.exists():
@@ -96,6 +180,10 @@ class PreviewService:
         if existing_marketplace_assets and not force:
             return existing_marketplace_assets
         source_candidates = [path for path in sorted(previews_dir.iterdir()) if self.is_marketplace_source_candidate(path)]
+        source_candidates = sorted(
+            source_candidates,
+            key=lambda item: self.archive_candidate_sort_key(item.name),
+        )[: self.MAX_MARKETPLACE_SOURCE_CANDIDATES]
         if not source_candidates:
             return existing_marketplace_assets
 
@@ -175,6 +263,94 @@ class PreviewService:
             "kind": kind,
         }
 
+    def archive_candidate_sort_key(self, entry_name: str) -> tuple[int, int, str]:
+        label = Path(entry_name).name.lower()
+        priority = next((index for index, marker in enumerate(self.MAIN_PREVIEW_PRIORITIES) if marker in label), len(self.MAIN_PREVIEW_PRIORITIES))
+        penalty = 0
+        if any(hint in label for hint in self.LOW_VALUE_HINTS):
+            penalty += 2
+        if re.search(r"_\d{2,}", label):
+            penalty += 1
+        return (priority, penalty, label)
+
+    def is_image_path(self, path: str) -> bool:
+        return path.lower().split("?")[0].endswith((".png", ".jpg", ".jpeg", ".webp"))
+
+    def resolve_local_preview_path(self, raw_path: str, storage_root: Path) -> Path | None:
+        path = raw_path.strip()
+        if not path:
+            return None
+        if path.startswith("/storage/"):
+            candidate = storage_root / path.split("/storage/", 1)[1]
+            return candidate if candidate.exists() else None
+        if path.startswith("http://") or path.startswith("https://"):
+            parsed = urlparse(path)
+            if "/storage/" in parsed.path:
+                relative = parsed.path.split("/storage/", 1)[1]
+                candidate = storage_root / relative
+                return candidate if candidate.exists() else None
+            return None
+        candidate = Path(path)
+        return candidate if candidate.exists() else None
+
+    def preview_asset_score(self, preview: dict[str, str], local_path: Path | None) -> float:
+        label = str(preview.get("label") or preview.get("path") or "").lower()
+        kind = str(preview.get("kind") or "").lower()
+        score = 0.0
+        if "marketplace_" in label or kind == "marketplace_preview":
+            score += 180
+        if "hero" in label:
+            score += 30
+        if "dimensions" in label:
+            score += 24
+        if "lifestyle" in label:
+            score += 20
+        if "snapmaker_compatible_final" in label:
+            score += 14
+        priority_index = next((index for index, marker in enumerate(self.MAIN_PREVIEW_PRIORITIES) if marker in label), len(self.MAIN_PREVIEW_PRIORITIES))
+        score += max(0, (len(self.MAIN_PREVIEW_PRIORITIES) - priority_index) * 8)
+        if any(hint in label for hint in self.LOW_VALUE_HINTS):
+            score -= 40
+        if local_path and local_path.exists():
+            try:
+                with Image.open(local_path) as image:
+                    image.load()
+                    width, height = image.size
+                score += min(width, height) / 180
+            except Exception:
+                pass
+            analysis = self.marketplace_candidate_analysis(local_path)
+            if analysis is not None:
+                score += float(analysis.get("score", 0.0)) / 12.0
+            else:
+                score -= 18
+        return score
+
+    def preview_digest(self, local_path: Path | None) -> str:
+        if local_path is None or not local_path.exists():
+            return ""
+        digest = hashlib.sha1()
+        try:
+            with local_path.open("rb") as handle:
+                while True:
+                    chunk = handle.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
+        except Exception:
+            return ""
+        return digest.hexdigest()
+
+    def preview_signature(self, preview: dict[str, str], local_path: Path | None) -> str:
+        if local_path and local_path.exists():
+            label = local_path.stem.lower()
+        else:
+            label = Path(str(preview.get("label") or preview.get("path") or "")).stem.lower()
+        label = re.sub(r"^marketplace_\d+_?", "", label)
+        label = re.sub(r"_(\d{2,3})$", "", label)
+        label = re.sub(r"(?:_thumbnail(?:_small|_middle)?|_small)$", "", label)
+        return label.strip("-_ ")
+
     def is_marketplace_source_candidate(self, file_path: Path) -> bool:
         if file_path.suffix.lower() not in IMAGE_EXTENSIONS:
             return False
@@ -213,17 +389,28 @@ class PreviewService:
         try:
             with Image.open(source) as image:
                 image.load()
-                width, height = image.size
+                working = image.convert("RGBA")
+                max_side = max(working.size)
+                if max_side > 2200:
+                    scale = 2200 / float(max_side)
+                    working = working.resize(
+                        (
+                            max(1, int(working.size[0] * scale)),
+                            max(1, int(working.size[1] * scale)),
+                        ),
+                        Image.Resampling.LANCZOS,
+                    )
+                width, height = working.size
                 if width < 300 or height < 300:
                     return None
-                bbox = self.subject_bbox(image)
+                bbox = self.subject_bbox(working)
                 bbox_width = max(bbox[2] - bbox[0], 1)
                 bbox_height = max(bbox[3] - bbox[1], 1)
                 coverage = (bbox_width * bbox_height) / float(width * height)
-                sharpness = self.image_sharpness(image)
-                color_variation = self.image_color_variation(image)
-                color_buckets = self.image_color_bucket_count(image, bbox)
-                background_brightness = self.image_background_brightness(image)
+                sharpness = self.image_sharpness(working)
+                color_variation = self.image_color_variation(working)
+                color_buckets = self.image_color_bucket_count(working, bbox)
+                background_brightness = self.image_background_brightness(working)
         except Exception:
             return None
 
@@ -468,14 +655,23 @@ class PreviewService:
         return float(np.mean(corners))
 
     def infer_dimensions_mm(self, source_files: list[Path]) -> tuple[float, float, float] | None:
+        # Nunca carrega 3MF/STEP no caminho de preview durante upload:
+        # nesses formatos o parse geométrico pode usar muita memória e derrubar o serviço.
+        lightweight_suffixes = {".stl", ".obj", ".ply", ".off"}
         for file_path in source_files:
-            if not file_path.exists() or file_path.suffix.lower() not in {".3mf", ".stl", ".obj", ".ply"}:
+            if not file_path.exists():
+                continue
+            suffix = file_path.suffix.lower()
+            if suffix not in lightweight_suffixes:
                 continue
             try:
-                scene = trimesh.load(file_path, force="scene")
-                extents = getattr(scene, "extents", None)
-                if extents is None and hasattr(scene, "geometry") and scene.geometry:
-                    extents = next(iter(scene.geometry.values())).extents
+                if file_path.stat().st_size > self.MAX_DIMENSION_INFER_FILE_BYTES:
+                    continue
+            except OSError:
+                continue
+            try:
+                mesh = trimesh.load(file_path, force="mesh", process=False, validate=False)
+                extents = getattr(mesh, "extents", None)
                 if extents is None:
                     continue
                 values = tuple(round(float(value), 1) for value in extents[:3])

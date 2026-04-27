@@ -33,7 +33,7 @@ class SlicerValidationService:
                 settings = {}
             else:
                 settings = json.loads(archive.read("Metadata/project_settings.config").decode("utf-8"))
-            root = ET.fromstring(archive.read("3D/3dmodel.model")) if "3D/3dmodel.model" in names else None
+            model_name = "3D/3dmodel.model" if "3D/3dmodel.model" in names else None
 
         profile = self.profile_service.load_profile()
         build_volume = profile["build_volume_mm"]
@@ -66,17 +66,25 @@ class SlicerValidationService:
         if bed_exclude_area is not None and bed_exclude_area != []:
             risks.append("bed_exclude_area ainda preserva zonas herdadas incompatíveis com a U1.")
 
-        if root is not None:
-            ns = {"m": "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"}
-            vertices = root.findall("m:resources/m:object/m:mesh/m:vertices/m:vertex", ns)
-            if vertices:
-                xs = [float(vertex.attrib["x"]) for vertex in vertices]
-                ys = [float(vertex.attrib["y"]) for vertex in vertices]
-                zs = [float(vertex.attrib["z"]) for vertex in vertices]
-                if min(xs) < 0 or min(ys) < 0 or min(zs) < 0:
-                    risks.append("Geometria final contém coordenadas negativas fora da mesa.")
-                if max(xs) > float(build_volume["x"]) or max(ys) > float(build_volume["y"]) or max(zs) > float(build_volume["z"]):
-                    risks.append("Geometria final excede o envelope útil da Snapmaker U1.")
+        if model_name is not None:
+            bounds = self.extract_model_bounds_streaming(file_path, model_name)
+            if bounds is None:
+                risks.append("Não foi possível validar envelope geométrico do 3MF final em modo seguro.")
+            else:
+                min_x, min_y, min_z, max_x, max_y, max_z, vertex_count, truncated = bounds
+                if vertex_count > 0:
+                    if min_x < 0 or min_y < 0 or min_z < 0:
+                        risks.append("Geometria final contém coordenadas negativas fora da mesa.")
+                    if (
+                        max_x > float(build_volume["x"])
+                        or max_y > float(build_volume["y"])
+                        or max_z > float(build_volume["z"])
+                    ):
+                        risks.append("Geometria final excede o envelope útil da Snapmaker U1.")
+                    if truncated:
+                        findings.append(
+                            "Validação geométrica executada por amostragem de segurança (arquivo muito grande)."
+                        )
 
         initial_speed = settings.get("initial_layer_speed", ["18"])
         findings.append(f"Velocidade inicial registrada: {initial_speed[0] if isinstance(initial_speed, list) else initial_speed} mm/s.")
@@ -93,3 +101,56 @@ class SlicerValidationService:
             "risks": risks,
             "estimates": estimates,
         }
+
+    def extract_model_bounds_streaming(
+        self,
+        file_path: Path,
+        model_name: str,
+        *,
+        max_vertices: int = 1_500_000,
+    ) -> tuple[float, float, float, float, float, float, int, bool] | None:
+        try:
+            with zipfile.ZipFile(file_path) as archive:
+                with archive.open(model_name, "r") as model_stream:
+                    min_x = min_y = min_z = float("inf")
+                    max_x = max_y = max_z = float("-inf")
+                    vertex_count = 0
+                    truncated = False
+
+                    for _, elem in ET.iterparse(model_stream, events=("start",)):
+                        if not elem.tag.endswith("vertex"):
+                            continue
+                        try:
+                            x = float(elem.attrib.get("x", "0"))
+                            y = float(elem.attrib.get("y", "0"))
+                            z = float(elem.attrib.get("z", "0"))
+                        except (TypeError, ValueError):
+                            elem.clear()
+                            continue
+                        min_x = min(min_x, x)
+                        min_y = min(min_y, y)
+                        min_z = min(min_z, z)
+                        max_x = max(max_x, x)
+                        max_y = max(max_y, y)
+                        max_z = max(max_z, z)
+                        vertex_count += 1
+                        if vertex_count >= max_vertices:
+                            truncated = True
+                            elem.clear()
+                            break
+                        elem.clear()
+
+                    if vertex_count == 0:
+                        return None
+                    return (
+                        min_x,
+                        min_y,
+                        min_z,
+                        max_x,
+                        max_y,
+                        max_z,
+                        vertex_count,
+                        truncated,
+                    )
+        except Exception:
+            return None
