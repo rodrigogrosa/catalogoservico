@@ -872,11 +872,20 @@ class StoreService:
         material = self.infer_material_name(project)
         manufacturer = "EuAchei3D"
         model_name = str(project.get("name") or channel.get("title") or "Modelo 3D")[:255]
+        dimensions_cm = self.infer_dimensions_cm(project)
+        weight_g = self.infer_weight_g(project)
+        theme = self.infer_sculpture_theme(project, channel)
+        character = self.infer_character_name(project, channel)
+        with_base = self.infer_with_base(project)
         values_by_id = {
             "BRAND": "Genérica",
             "MANUFACTURER": manufacturer,
             "MODEL": model_name,
             "MATERIAL": material,
+            "SCULPTURE_THEME": theme,
+            "SCULPTURE_TYPE": "Estátua",
+            "ARTWORK_TYPE": "Réplica",
+            "CHARACTER": character,
         }
         normalized: list[dict[str, Any]] = []
         for attribute_id in required_ids:
@@ -884,8 +893,69 @@ class StoreService:
             value_name = str(values_by_id.get(attribute_id, "")).strip()
             if not value_name:
                 continue
-            normalized.append({"id": attribute_id, "name": str(attribute.get("name") or attribute_id), "value_name": value_name[:255]})
+            normalized.append(self.build_mercado_livre_attribute(attribute, value_name=value_name[:255]))
+
+        optional_ids = ["SCULPTURE_THEME", "SCULPTURE_TYPE", "ARTWORK_TYPE", "CHARACTER", "LENGTH", "WIDTH", "HEIGHT", "WEIGHT", "WITH_BASE"]
+        seen_ids = {item["id"] for item in normalized if item.get("id")}
+        for attribute_id in optional_ids:
+            if attribute_id in seen_ids or attribute_id not in by_id:
+                continue
+            attribute = by_id[attribute_id]
+            if attribute_id == "LENGTH" and dimensions_cm:
+                normalized.append(self.build_mercado_livre_attribute(attribute, number=dimensions_cm[2], unit="cm"))
+            elif attribute_id == "WIDTH" and dimensions_cm:
+                normalized.append(self.build_mercado_livre_attribute(attribute, number=dimensions_cm[0], unit="cm"))
+            elif attribute_id == "HEIGHT" and dimensions_cm:
+                normalized.append(self.build_mercado_livre_attribute(attribute, number=dimensions_cm[1], unit="cm"))
+            elif attribute_id == "WEIGHT" and weight_g:
+                normalized.append(self.build_mercado_livre_attribute(attribute, number=weight_g, unit="g"))
+            elif attribute_id == "WITH_BASE":
+                normalized.append(self.build_mercado_livre_attribute(attribute, boolean_value=with_base))
+            else:
+                value_name = str(values_by_id.get(attribute_id, "")).strip()
+                if value_name:
+                    normalized.append(self.build_mercado_livre_attribute(attribute, value_name=value_name[:255]))
         return normalized
+
+    def build_mercado_livre_attribute(
+        self,
+        attribute: dict[str, Any],
+        *,
+        value_name: str | None = None,
+        number: float | None = None,
+        unit: str | None = None,
+        boolean_value: bool | None = None,
+    ) -> dict[str, Any]:
+        attribute_id = str(attribute.get("id") or "")
+        payload: dict[str, Any] = {"id": attribute_id, "name": str(attribute.get("name") or attribute_id)}
+        if boolean_value is not None:
+            option = self.match_mercado_livre_attribute_option(attribute, "Sim" if boolean_value else "Não")
+            if option:
+                payload["value_id"] = option.get("id")
+                payload["value_name"] = option.get("name")
+                return payload
+            payload["value_name"] = "Sim" if boolean_value else "Não"
+            return payload
+        if number is not None and unit:
+            payload["value_struct"] = {"number": round(float(number), 2), "unit": unit}
+            payload["value_name"] = f"{round(float(number), 2):g} {unit}"
+            return payload
+        text = (value_name or "").strip()
+        if text:
+            option = self.match_mercado_livre_attribute_option(attribute, text)
+            if option:
+                payload["value_id"] = option.get("id")
+                payload["value_name"] = option.get("name")
+                return payload
+            payload["value_name"] = text
+        return payload
+
+    def match_mercado_livre_attribute_option(self, attribute: dict[str, Any], value_name: str) -> dict[str, Any] | None:
+        lowered = value_name.strip().lower()
+        for option in attribute.get("values") or []:
+            if str(option.get("name", "")).strip().lower() == lowered:
+                return option
+        return None
 
     def infer_material_name(self, project: dict[str, Any]) -> str:
         sales = project.get("sales_profile") or {}
@@ -894,6 +964,62 @@ class StoreService:
             if "Material assumido:" in text:
                 return text.split("Material assumido:", 1)[1].split(".", 1)[0].strip() or "PLA"
         return "PLA"
+
+    def infer_dimensions_cm(self, project: dict[str, Any]) -> tuple[float, float, float] | None:
+        mesh_metrics = project.get("metadata", {}).get("mesh_metrics", {})
+        extents = mesh_metrics.get("extents_mm_assumed")
+        if not isinstance(extents, list) or len(extents) < 3:
+            return None
+        try:
+            x, y, z = [round(float(value) / 10.0, 1) for value in extents[:3]]
+        except (TypeError, ValueError):
+            return None
+        if min(x, y, z) <= 0:
+            return None
+        return (x, y, z)
+
+    def infer_weight_g(self, project: dict[str, Any]) -> float | None:
+        sales = project.get("sales_profile") or {}
+        value = sales.get("estimated_material_g")
+        try:
+            weight = round(float(value), 1)
+        except (TypeError, ValueError):
+            return None
+        return weight if weight > 0 else None
+
+    def infer_sculpture_theme(self, project: dict[str, Any], channel: dict[str, Any]) -> str:
+        haystack = " ".join(
+            [
+                str(project.get("name") or ""),
+                str(channel.get("title") or ""),
+                str(channel.get("description") or ""),
+            ]
+        ).lower()
+        if any(term in haystack for term in ["papagaio", "parrot", "bird", "pássaro", "passaro", "animal"]):
+            return "Animais"
+        if any(term in haystack for term in ["bola", "futebol", "soccer", "esporte"]):
+            return "Esportes"
+        return ""
+
+    def infer_character_name(self, project: dict[str, Any], channel: dict[str, Any]) -> str:
+        haystack = " ".join(
+            [
+                str(project.get("name") or ""),
+                str(channel.get("title") or ""),
+            ]
+        ).lower()
+        if "papagaio" in haystack or "parrot" in haystack:
+            return "Papagaio"
+        return ""
+
+    def infer_with_base(self, project: dict[str, Any]) -> bool:
+        haystack = " ".join(
+            [
+                str(project.get("name") or ""),
+                str(project.get("original_filename") or ""),
+            ]
+        ).lower()
+        return any(term in haystack for term in ["base", "stand", "pedestal", "plinth", "suporte"])
 
     def fetch_mercado_livre_category_attributes(self, category_id: str) -> list[dict[str, Any]]:
         request = Request(f"https://api.mercadolibre.com/categories/{category_id}/attributes", headers={"accept": "application/json"})

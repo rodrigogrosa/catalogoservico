@@ -105,3 +105,48 @@ def test_refresh_listing_media_replaces_listing_pictures(monkeypatch: pytest.Mon
             {"source": "https://api.euachei3d.com.br/storage/p/previews/marketplace_02.jpg"},
         ]
     }
+
+
+def test_build_mercado_livre_attributes_fills_secondary_sculpture_fields(monkeypatch: pytest.MonkeyPatch) -> None:
+    service = StoreService()
+    category_attributes = [
+        {"id": "MATERIAL", "name": "Material", "value_type": "string", "tags": {"required": True}, "values": []},
+        {"id": "SCULPTURE_THEME", "name": "Temática da escultura", "value_type": "string", "values": [{"id": "2489107", "name": "Animais"}]},
+        {"id": "SCULPTURE_TYPE", "name": "Tipo de escultura", "value_type": "string", "values": [{"id": "2489103", "name": "Estátua"}]},
+        {"id": "ARTWORK_TYPE", "name": "Tipo de obra", "value_type": "list", "values": [{"id": "2489102", "name": "Réplica"}]},
+        {"id": "CHARACTER", "name": "Personagem", "value_type": "string", "values": []},
+        {"id": "LENGTH", "name": "Comprimento", "value_type": "number_unit", "allowed_units": [{"id": "cm", "name": "cm"}]},
+        {"id": "WIDTH", "name": "Largura", "value_type": "number_unit", "allowed_units": [{"id": "cm", "name": "cm"}]},
+        {"id": "HEIGHT", "name": "Altura", "value_type": "number_unit", "allowed_units": [{"id": "cm", "name": "cm"}]},
+        {"id": "WEIGHT", "name": "Peso", "value_type": "number_unit", "allowed_units": [{"id": "g", "name": "g"}]},
+        {"id": "WITH_BASE", "name": "Com base", "value_type": "boolean", "values": [{"id": "242084", "name": "Não"}, {"id": "242085", "name": "Sim"}]},
+    ]
+    monkeypatch.setattr(service, "fetch_mercado_livre_category_attributes", lambda category_id: category_attributes)
+
+    project = {
+        "name": "Baby Parrot Zoocre8tions 3Colors",
+        "original_filename": "Baby_Parrot_ZooCre8tions_3Colors.3mf",
+        "metadata": {"mesh_metrics": {"extents_mm_assumed": [37.0, 62.0, 44.0]}},
+        "sales_profile": {
+            "estimated_material_g": 15.0,
+            "assumptions": ["Material assumido: PLA. Ajuste conforme uso final."],
+        },
+    }
+    channel = {
+        "title": "Baby Parrot Zoocre8Tions 3Colors Impresso Em 3D",
+        "description": "Mini escultura decorativa de um papagaio bebê impressa em 3D.",
+    }
+
+    attributes = service.build_mercado_livre_attributes("MLB186814", project, channel)
+    by_id = {item["id"]: item for item in attributes}
+
+    assert by_id["MATERIAL"]["value_name"] == "PLA"
+    assert by_id["SCULPTURE_THEME"]["value_name"] == "Animais"
+    assert by_id["SCULPTURE_TYPE"]["value_name"] == "Estátua"
+    assert by_id["ARTWORK_TYPE"]["value_name"] == "Réplica"
+    assert by_id["CHARACTER"]["value_name"] == "Papagaio"
+    assert by_id["WIDTH"]["value_struct"] == {"number": 3.7, "unit": "cm"}
+    assert by_id["HEIGHT"]["value_struct"] == {"number": 6.2, "unit": "cm"}
+    assert by_id["LENGTH"]["value_struct"] == {"number": 4.4, "unit": "cm"}
+    assert by_id["WEIGHT"]["value_struct"] == {"number": 15.0, "unit": "g"}
+    assert by_id["WITH_BASE"]["value_name"] == "Não"
