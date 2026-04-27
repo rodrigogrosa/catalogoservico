@@ -12,10 +12,10 @@ concurrency:
 
 jobs:
   # ──────────────────────────────────────────────────────────
-  # 1. Backend — pytest
+  # 1. Backend — pytest (BLOCKER)
   # ──────────────────────────────────────────────────────────
   test-backend:
-    name: Backend tests (pytest)
+    name: "Backend: pytest"
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -46,10 +46,10 @@ jobs:
           FREE_AI_ENABLED: "false"
 
   # ──────────────────────────────────────────────────────────
-  # 2. Frontend — lint + type-check
+  # 2. Frontend — type-check (BLOCKER) + lint (WARNING)
   # ──────────────────────────────────────────────────────────
   test-frontend:
-    name: Frontend lint & type-check
+    name: "Frontend: tsc + lint"
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -68,12 +68,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Lint (Next.js ESLint)
-        run: npm run lint
-
-      - name: Type-check (TypeScript)
+      - name: Type-check (TypeScript) — BLOCKER
         run: npx tsc --noEmit
-        continue-on-error: true
+
+      - name: Lint (ESLint) — WARNING
+        run: npm run lint
+        continue-on-error: true  # ESLint warnings não bloqueiam deploy
 
   # ──────────────────────────────────────────────────────────
   # 3. Deploy — sincroniza catalogoservico → Northflank builda
