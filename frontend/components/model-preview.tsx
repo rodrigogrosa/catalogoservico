@@ -60,31 +60,50 @@ function Scene({ url }: { url: string }) {
   );
 }
 
-export function ModelPreview({ url }: Props) {
-  const extension = url?.split(".").pop()?.toLowerCase();
-  const is3D = extension === "stl" || extension === "obj";
+const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "webp"]);
+const MODEL_EXTENSIONS = new Set(["stl", "obj"]);
 
-  if (!url || !is3D) {
+export function ModelPreview({ url }: Props) {
+  const extension = url?.split(".").pop()?.split("?")[0].toLowerCase();
+
+  if (!url) {
     return (
       <div className="flex h-[420px] items-center justify-center rounded-3xl border border-white/10 bg-black/20 text-sm text-slate-400">
-        Preview 3D habilitado para arquivos STL e OBJ.
+        Sem pré-visualização disponível.
       </div>
     );
   }
 
-  return (
-    <CanvasErrorBoundary>
-      <div className="h-[420px] overflow-hidden rounded-3xl border border-white/10 bg-slate-950/50">
-        <Canvas camera={{ position: [140, 120, 160], fov: 45 }}>
-          <ambientLight intensity={1.1} />
-          <directionalLight position={[120, 80, 60]} intensity={1.4} castShadow />
-          <directionalLight position={[-80, 40, -60]} intensity={0.6} />
-          <Suspense fallback={null}>
-            <Scene url={url} />
-          </Suspense>
-          <OrbitControls enablePan enableZoom enableRotate />
-        </Canvas>
+  if (IMAGE_EXTENSIONS.has(extension ?? "")) {
+    return (
+      <div className="flex h-[420px] items-center justify-center overflow-hidden rounded-3xl border border-white/10 bg-slate-950/50">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={url} alt="Preview do projeto" className="max-h-full max-w-full object-contain" />
       </div>
-    </CanvasErrorBoundary>
+    );
+  }
+
+  if (MODEL_EXTENSIONS.has(extension ?? "")) {
+    return (
+      <CanvasErrorBoundary>
+        <div className="h-[420px] overflow-hidden rounded-3xl border border-white/10 bg-slate-950/50">
+          <Canvas camera={{ position: [140, 120, 160], fov: 45 }}>
+            <ambientLight intensity={1.1} />
+            <directionalLight position={[120, 80, 60]} intensity={1.4} castShadow />
+            <directionalLight position={[-80, 40, -60]} intensity={0.6} />
+            <Suspense fallback={null}>
+              <Scene url={url} />
+            </Suspense>
+            <OrbitControls enablePan enableZoom enableRotate />
+          </Canvas>
+        </div>
+      </CanvasErrorBoundary>
+    );
+  }
+
+  return (
+    <div className="flex h-[420px] items-center justify-center rounded-3xl border border-white/10 bg-black/20 text-sm text-slate-400">
+      Preview 3D habilitado para arquivos STL e OBJ.
+    </div>
   );
 }

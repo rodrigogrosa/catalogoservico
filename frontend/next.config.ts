@@ -65,7 +65,7 @@ const securityHeaders = [
     key: "Content-Security-Policy",
     value: [
       "default-src 'self'",
-      `connect-src 'self' ${backendCspOrigin} ${northflankCspOrigin} ${prodCspOrigin} https://pollinations.ai https://api-inference.huggingface.co`,
+      `connect-src 'self' ${backendCspOrigin} ${northflankCspOrigin} ${prodCspOrigin} https://pollinations.ai https://text.pollinations.ai https://image.pollinations.ai https://api-inference.huggingface.co`,
       "img-src 'self' data: blob: https:",
       "media-src 'self' blob:",
       // WebGL / Three.js require worker-src blob:
