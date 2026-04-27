@@ -79,7 +79,7 @@ jobs:
   # ──────────────────────────────────────────────────────────
   # 3. Deploy — sincroniza catalogoservico → Northflank builda
   # Só roda em push direto na main (não em PRs)
-  # Secret necessário: GH_DEPLOY_PAT (Fine-grained PAT com Contents:write em catalogoservico)
+  # Secret necessário: DEPLOY_SSH_KEY (chave privada SSH com deploy key no catalogoservico)
   # ──────────────────────────────────────────────────────────
   deploy:
     name: Sync → catalogoservico (Northflank)
@@ -95,6 +95,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Configurar SSH deploy key
+        uses: webfactory/ssh-agent@v0.9.1
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
+
+      - name: Adicionar github.com ao known_hosts
+        run: ssh-keyscan github.com >> ~/.ssh/known_hosts
+
       - name: Configurar identidade git
         run: |
           git config user.email "ci-deploy@github-actions"
@@ -102,8 +110,7 @@ jobs:
 
       - name: Push para catalogoservico/snapmaker3d-studio
         run: |
-          git remote add deploy \
-            https://x-access-token:${{ secrets.GH_DEPLOY_PAT }}@github.com/rodrigogrosa/catalogoservico.git
+          git remote add deploy git@github.com:rodrigogrosa/catalogoservico.git
           git push deploy HEAD:snapmaker3d-studio --force
 
       - name: Resumo do deploy
