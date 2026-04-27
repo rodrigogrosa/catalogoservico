@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { usePathname } from "next/navigation";
 
 import { BrandMark } from "@/components/brand-mark";
 import { useAuth } from "@/components/auth-provider";
@@ -21,21 +22,43 @@ type Props = {
   subtitle?: string;
 };
 
-const navItems: NavItem[] = [
+const operationNavItems: NavItem[] = [
   { label: "Visão geral", href: "/", helper: "Comando executivo", permission: PERMISSIONS.dashboardView },
   { label: "Novo projeto", href: "/new-project", helper: "Entrada e importação", permission: PERMISSIONS.projectsCreate },
   { label: "Catálogo", href: "/catalog", helper: "Portfólio e vendas", permission: PERMISSIONS.catalogView },
-  { label: "Login social", href: "/social-login", helper: "Acesso e identidade", permission: PERMISSIONS.socialLoginView },
-  { label: "Provedores IA", href: "/ai-settings", helper: "Fallback externo", permission: PERMISSIONS.aiSettingsView },
-  { label: "Lojas", href: "/stores", helper: "Marketplaces e canais", permission: PERMISSIONS.storesView },
   { label: "Fila", href: "/queue", helper: "Operação em andamento", permission: PERMISSIONS.queueView },
   { label: "Relatórios", href: "/reports", helper: "Rastreabilidade", permission: PERMISSIONS.reportsView },
+];
+
+const configNavItems: NavItem[] = [
+  { label: "Lojas", href: "/stores", helper: "Marketplaces e canais", permission: PERMISSIONS.storesView },
+  { label: "Login social", href: "/social-login", helper: "Acesso e identidade", permission: PERMISSIONS.socialLoginView },
+  { label: "Provedores IA", href: "/ai-settings", helper: "Fallback externo", permission: PERMISSIONS.aiSettingsView },
   { label: "Usuários", href: "/users", helper: "Perfis e acessos", permission: PERMISSIONS.usersView },
 ];
 
 export function AppShell({ children, active = "Visão geral", title = "Portal EuAchei3D", subtitle }: Props) {
+  const pathname = usePathname();
   const { can, logout, user } = useAuth();
-  const visibleNavItems = navItems.filter((item) => can(item.permission));
+  const visibleOperationItems = operationNavItems.filter((item) => can(item.permission));
+  const visibleConfigItems = configNavItems.filter((item) => can(item.permission));
+  const [configOpen, setConfigOpen] = useState(false);
+
+  const isConfigRoute = useMemo(
+    () =>
+      visibleConfigItems.some((item) =>
+        item.href === "/" ? pathname === "/" : pathname === item.href || pathname.startsWith(`${item.href}/`)
+      ),
+    [pathname, visibleConfigItems]
+  );
+
+  useEffect(() => {
+    if (isConfigRoute) setConfigOpen(true);
+  }, [isConfigRoute]);
+
+  function isItemActive(item: NavItem): boolean {
+    return item.label === active || pathname === item.href || pathname.startsWith(`${item.href}/`);
+  }
 
   return (
     <main className="min-h-screen">
@@ -52,8 +75,9 @@ export function AppShell({ children, active = "Visão geral", title = "Portal Eu
             </div>
 
             <nav className="mt-5 grid content-start gap-1.5">
-              {visibleNavItems.map((item) => {
-                const selected = item.label === active;
+              <p className="px-2 text-[0.64rem] font-semibold uppercase tracking-[0.2em] text-slate-400">Operação</p>
+              {visibleOperationItems.map((item) => {
+                const selected = isItemActive(item);
                 return (
                   <Link key={item.label} href={item.href} className={`nav-link ${selected ? "nav-link-active" : ""}`}>
                     <span>
@@ -64,6 +88,40 @@ export function AppShell({ children, active = "Visão geral", title = "Portal Eu
                   </Link>
                 );
               })}
+
+              {visibleConfigItems.length > 0 ? (
+                <>
+                  <p className="mt-3 px-2 text-[0.64rem] font-semibold uppercase tracking-[0.2em] text-slate-400">Plataforma</p>
+                  <button
+                    type="button"
+                    onClick={() => setConfigOpen((current) => !current)}
+                    className={`nav-link w-full text-left ${configOpen || isConfigRoute ? "nav-link-active" : ""}`}
+                  >
+                    <span>
+                      <span className="block">Configuração</span>
+                      <span className="mt-0.5 block text-[0.68rem] font-medium tracking-[0.12em] text-slate-400">Acessos, integrações e IA</span>
+                    </span>
+                    <span className="text-xs text-slate-400">{configOpen ? "−" : "+"}</span>
+                  </button>
+
+                  {configOpen ? (
+                    <div className="ml-3 grid gap-1 border-l border-white/15 pl-3">
+                      {visibleConfigItems.map((item) => {
+                        const selected = isItemActive(item);
+                        return (
+                          <Link key={item.label} href={item.href} className={`nav-link ${selected ? "nav-link-active" : ""}`}>
+                            <span>
+                              <span className="block">{item.label}</span>
+                              <span className="mt-0.5 block text-[0.66rem] font-medium tracking-[0.1em] text-slate-400">{item.helper}</span>
+                            </span>
+                            <span className="text-xs text-slate-500">●</span>
+                          </Link>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                </>
+              ) : null}
             </nav>
 
             <div className="mt-auto rounded-[1.25rem] border border-white/10 bg-white/5 px-4 py-4">
@@ -116,8 +174,8 @@ export function AppShell({ children, active = "Visão geral", title = "Portal Eu
             </div>
 
             <div className="mt-5 flex gap-2 overflow-x-auto xl:hidden">
-              {visibleNavItems.map((item) => {
-                const selected = item.label === active;
+              {visibleOperationItems.map((item) => {
+                const selected = isItemActive(item);
                 return (
                   <Link
                     key={item.label}
@@ -130,7 +188,38 @@ export function AppShell({ children, active = "Visão geral", title = "Portal Eu
                   </Link>
                 );
               })}
+              {visibleConfigItems.length > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setConfigOpen((current) => !current)}
+                  className={`shrink-0 rounded-full px-4 py-2 text-sm font-semibold transition ${
+                    configOpen || isConfigRoute
+                      ? "bg-slate-950 text-white"
+                      : "border border-slate-900/10 bg-white/80 text-slate-700"
+                  }`}
+                >
+                  Configuração
+                </button>
+              ) : null}
             </div>
+            {configOpen && visibleConfigItems.length > 0 ? (
+              <div className="mt-3 flex gap-2 overflow-x-auto xl:hidden">
+                {visibleConfigItems.map((item) => {
+                  const selected = isItemActive(item);
+                  return (
+                    <Link
+                      key={item.label}
+                      href={item.href}
+                      className={`shrink-0 rounded-full px-4 py-2 text-sm font-semibold transition ${
+                        selected ? "bg-slate-950 text-white" : "border border-slate-900/10 bg-white/80 text-slate-700"
+                      }`}
+                    >
+                      {item.label}
+                    </Link>
+                  );
+                })}
+              </div>
+            ) : null}
           </header>
 
           <div className="portal-shell">{children}</div>
