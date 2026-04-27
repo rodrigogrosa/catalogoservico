@@ -42,6 +42,7 @@ const emptyForm: FormState = {
 
 export default function UsersPage() {
   const { can, user } = useAuth();
+  const isMaster = user?.role === "master";
   const [users, setUsers] = useState<UserRecord[]>([]);
   const [accessModel, setAccessModel] = useState<AccessModel | null>(null);
   const [form, setForm] = useState<FormState>(emptyForm);
@@ -200,12 +201,13 @@ export default function UsersPage() {
                 <section className="portal-card rounded-[1.8rem] px-6 py-6">
                   <AccessDeniedPanel
                     title="Modo leitura"
-                    description="Seu perfil pode visualizar usuários, mas não criar, editar nem excluir acessos."
+                    description="Seu perfil pode visualizar usuários, mas não pode alterar permissões."
                   />
                 </section>
               }
             >
-              <form onSubmit={handleSubmit} className="portal-card rounded-[1.8rem] px-6 py-6">
+              {isMaster ? (
+                <form onSubmit={handleSubmit} className="portal-card rounded-[1.8rem] px-6 py-6">
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <p className="section-kicker">{editingUser ? "Editar usuário" : "Novo usuário"}</p>
@@ -213,11 +215,41 @@ export default function UsersPage() {
                       {editingUser ? editingUser.display_name : "Cadastrar acesso"}
                     </h2>
                   </div>
-                  {editingUser ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    {editingUser ? (
+                      <button type="button" onClick={resetForm} className="portal-action">
+                        Novo usuário
+                      </button>
+                    ) : null}
                     <button type="button" onClick={resetForm} className="portal-action">
-                      Cancelar edição
+                      Limpar formulário
                     </button>
-                  ) : null}
+                  </div>
+                </div>
+
+                <div className="mt-6 rounded-[1.2rem] border border-slate-900/10 bg-white/80 p-4">
+                  <FieldSelect
+                    label="Escolher usuário para editar níveis de permissão"
+                    value={editingUser?.id ?? ""}
+                    onChange={(value) => {
+                      if (!value) {
+                        resetForm();
+                        return;
+                      }
+                      const selected = users.find((item) => item.id === value);
+                      if (selected) startEdit(selected);
+                    }}
+                    options={[
+                      { value: "", label: "Criar novo usuário" },
+                      ...users.map((item) => ({
+                        value: item.id,
+                        label: `${item.display_name} (${item.username})`,
+                      })),
+                    ]}
+                  />
+                  <p className="mt-2 text-sm text-slate-500">
+                    Selecione um usuário para editar permissões. Para criar, mantenha “Criar novo usuário”.
+                  </p>
                 </div>
 
                 <div className="mt-6 grid gap-4 md:grid-cols-2">
@@ -290,6 +322,14 @@ export default function UsersPage() {
                   {saving ? "Salvando..." : editingUser ? "Salvar alterações" : "Criar usuário"}
                 </button>
               </form>
+              ) : (
+                <section className="portal-card rounded-[1.8rem] px-6 py-6">
+                  <AccessDeniedPanel
+                    title="Somente master altera permissões"
+                    description="Seu perfil pode visualizar usuários, porém criar, editar ou excluir acessos é exclusivo do usuário master."
+                  />
+                </section>
+              )}
             </PermissionGate>
 
             <section className="portal-card rounded-[1.8rem] px-6 py-6">
@@ -322,7 +362,7 @@ export default function UsersPage() {
                     <UserRow
                       key={record.id}
                       record={record}
-                      canManage={can(PERMISSIONS.usersManage)}
+                      canManage={Boolean(can(PERMISSIONS.usersManage) && isMaster)}
                       onEdit={() => startEdit(record)}
                       onDelete={() => void handleDelete(record)}
                     />

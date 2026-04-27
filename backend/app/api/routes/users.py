@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.core.auth import require_permission
+from app.core.auth import require_master, require_permission
 from app.schemas.auth import (
     AuthUser,
     UserCreateRequest,
@@ -32,7 +32,7 @@ async def list_users(
 @router.post("", response_model=UserRecordResponse)
 async def create_user(
     payload: UserCreateRequest,
-    current_user: AuthUser = Depends(require_permission("users.manage")),
+    current_user: AuthUser = Depends(require_master),
     service: UserService = Depends(get_user_service),
 ) -> UserRecordResponse:
     _ = current_user
@@ -47,7 +47,7 @@ async def update_user(
     provider: str,
     username: str,
     payload: UserUpdateRequest,
-    current_user: AuthUser = Depends(require_permission("users.manage")),
+    current_user: AuthUser = Depends(require_master),
     service: UserService = Depends(get_user_service),
 ) -> UserRecordResponse:
     _ = current_user
@@ -64,7 +64,7 @@ async def update_user(
 async def delete_user(
     provider: str,
     username: str,
-    current_user: AuthUser = Depends(require_permission("users.manage")),
+    current_user: AuthUser = Depends(require_master),
     service: UserService = Depends(get_user_service),
 ) -> dict[str, str]:
     if provider == "master" and username == current_user.username:

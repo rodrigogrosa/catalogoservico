@@ -33,3 +33,9 @@ def require_permission(permission: str):
         return current_user
 
     return dependency
+
+
+def require_master(current_user: AuthUser = Depends(require_current_user)) -> AuthUser:
+    if current_user.role != "master":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Apenas usuário master pode executar esta ação.")
+    return current_user
