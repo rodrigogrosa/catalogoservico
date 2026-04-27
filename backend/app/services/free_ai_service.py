@@ -7,6 +7,7 @@ import re
 from typing import Any
 from urllib.parse import quote
 
+import base64
 import httpx
 from PIL import Image, ImageEnhance, ImageFilter
 
@@ -26,6 +27,11 @@ class FreeAiService:
 
     POLLINATIONS_TEXT_URL = "https://text.pollinations.ai"
     POLLINATIONS_IMAGE_URL = "https://image.pollinations.ai/prompt"
+    HUGGINGFACE_IMG2IMG_DEFAULT_MODEL = "timbrooks/instruct-pix2pix"
+    IMAGE_ENHANCEMENT_PROMPT = (
+        "professional ecommerce product photo, sharp focus, studio lighting, "
+        "clean white background, marketplace ready, high quality output"
+    )
 
     def __init__(
         self,
@@ -100,42 +106,69 @@ class FreeAiService:
     def generate_marketplace_images(
         self,
         *,
-        source_image: Path,
+        source_images: list[Path],
         output_dir: Path,
         project_name: str,
         context_text: str,
-        count: int = 2,
+        count: int = 3,
     ) -> tuple[list[Path], dict[str, Any]]:
+        """Enhance and generate marketplace-ready images for a project.
+
+        Provider chain per image (in order):
+        1. HuggingFace img2img — enhances the original extracted photo (requires API token)
+        2. Pollinations text-to-image — generates a styled product photo from description
+        3. HuggingFace text-to-image — secondary AI generation fallback
+        4. Deterministic PIL enhancement — always works, no external calls
+        """
         runtime = self.runtime_preferences()
-        if not self.is_enabled(runtime) or not source_image.exists():
+        valid_sources = [p for p in source_images if p.exists()]
+        if not self.is_enabled(runtime) or not valid_sources:
             return [], {"selected_provider": "disabled", "attempts": []}
 
         output_dir.mkdir(parents=True, exist_ok=True)
         attempts: list[dict[str, Any]] = []
         generated: list[Path] = []
-        subject_hint = self.describe_subject_for_prompt(source_image, project_name)
+        primary_source = valid_sources[0]
+        subject_hint = self.describe_subject_for_prompt(primary_source, project_name)
         prompts = self.build_image_prompts(subject_hint=subject_hint, context_text=context_text, count=count)
 
         for index, prompt in enumerate(prompts, start=1):
+            # Cycle through available source images so each gets enhanced
+            source = valid_sources[(index - 1) % len(valid_sources)]
             target = output_dir / f"marketplace_ai_{index:02d}.jpg"
             produced = False
-            for provider in self.provider_order(runtime):
-                if provider not in {"pollinations", "huggingface"}:
-                    continue
-                try:
-                    if provider == "pollinations":
-                        self._generate_image_pollinations(prompt, target, runtime=runtime)
-                    else:
-                        self._generate_image_huggingface(prompt, target, runtime=runtime)
-                    produced = True
-                    attempts.append({"provider": provider, "status": "ok", "target": target.name})
-                    break
-                except Exception as exc:  # noqa: BLE001
-                    attempts.append({"provider": provider, "status": "failed", "target": target.name, "error": str(exc)})
+
+            # Provider 1: HuggingFace img2img — enhances the real extracted photo
+            try:
+                self._enhance_image_huggingface_img2img(source, target, runtime=runtime)
+                produced = True
+                attempts.append({"provider": "huggingface_img2img", "status": "ok", "target": target.name})
+            except Exception as exc:  # noqa: BLE001
+                attempts.append({"provider": "huggingface_img2img", "status": "failed", "target": target.name, "error": str(exc)})
+
             if not produced:
-                self._deterministic_image_fallback(source_image, target)
+                # Providers 2 & 3: text-to-image generation (Pollinations → HuggingFace)
+                for provider in self.provider_order(runtime):
+                    if provider not in {"pollinations", "huggingface"}:
+                        continue
+                    try:
+                        if provider == "pollinations":
+                            self._generate_image_pollinations(prompt, target, runtime=runtime)
+                        else:
+                            self._generate_image_huggingface(prompt, target, runtime=runtime)
+                        produced = True
+                        attempts.append({"provider": provider, "status": "ok", "target": target.name})
+                        break
+                    except Exception as exc:  # noqa: BLE001
+                        attempts.append({"provider": provider, "status": "failed", "target": target.name, "error": str(exc)})
+
+            if not produced:
+                # Provider 4: deterministic PIL enhancement — never fails
+                self._deterministic_image_fallback(source, target)
                 attempts.append({"provider": "deterministic", "status": "ok", "target": target.name})
+
             generated.append(target)
+
         selected = next((item["provider"] for item in attempts if item.get("status") == "ok"), "deterministic")
         return generated, {"selected_provider": selected, "attempts": attempts, "subject_hint": subject_hint}
 
@@ -292,6 +325,37 @@ class FreeAiService:
             f"https://api-inference.huggingface.co/models/{model}",
             headers={"Authorization": f"Bearer {token}", "Accept": "image/*"},
             json={"inputs": prompt},
+        )
+        response.raise_for_status()
+        self._write_and_validate_image(response.content, target)
+
+    def _enhance_image_huggingface_img2img(self, source_image: Path, target: Path, *, runtime: dict[str, Any]) -> None:
+        """Sends an existing product image to HuggingFace img2img for quality enhancement.
+
+        Requires a HuggingFace API token. Falls back gracefully if unavailable.
+        The configured huggingface_image_model is used; falls back to instruct-pix2pix.
+        """
+        token = str(runtime.get("huggingface_api_token") or self.settings.huggingface_api_token or "").strip()
+        if not token:
+            raise ValueError("huggingface_api_token ausente para img2img")
+        model = (
+            str(runtime.get("huggingface_image_model") or self.settings.huggingface_image_model or "").strip()
+            or self.HUGGINGFACE_IMG2IMG_DEFAULT_MODEL
+        )
+        with source_image.open("rb") as handle:
+            image_b64 = base64.b64encode(handle.read()).decode("utf-8")
+        response = self.client.post(
+            f"https://api-inference.huggingface.co/models/{model}",
+            headers={"Authorization": f"Bearer {token}", "Accept": "image/*"},
+            json={
+                "inputs": image_b64,
+                "parameters": {
+                    "prompt": self.IMAGE_ENHANCEMENT_PROMPT,
+                    "strength": 0.30,
+                    "guidance_scale": 7.5,
+                    "num_inference_steps": 20,
+                },
+            },
         )
         response.raise_for_status()
         self._write_and_validate_image(response.content, target)

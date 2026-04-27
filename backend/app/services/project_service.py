@@ -1037,12 +1037,15 @@ class ProjectService:
             f"formatos detectados: {source_context or 'desconhecido'}"
         )
         try:
+            max_previews = max(1, int(getattr(self.settings, "max_project_previews", 5)))
+            raw_count = len([p for p in previews if p.get("kind") != "marketplace_preview"])
+            needed = max(1, max_previews - raw_count)
             generated_paths, meta = self.free_ai.generate_marketplace_images(
-                source_image=image_candidates[0],
+                source_images=image_candidates,
                 output_dir=previews_dir,
                 project_name=project_name,
                 context_text=context_text,
-                count=1,
+                count=needed,
             )
             for path in generated_paths:
                 previews.append(
@@ -1277,12 +1280,14 @@ class ProjectService:
                 manifest.setdefault("metadata", {})
                 manifest["metadata"]["ai_media_pipeline"] = {"status": "completed", **ai_meta}
 
-                # Merge curated previews: add new AI-generated previews without removing those
-                # already present (including any added by the processing pipeline).
-                existing_preview_paths = {p.get("path") for p in manifest.get("previews") or []}
+                # CRITICAL: Merge all previews (manifest existing + new AI-generated) then
+                # re-curate to strictly enforce the max-5-photos rule.
+                all_previews = list(manifest.get("previews") or [])
+                existing_paths = {p.get("path") for p in all_previews}
                 for preview in curated_previews:
-                    if preview.get("path") not in existing_preview_paths:
-                        manifest.setdefault("previews", []).append(preview)
+                    if preview.get("path") not in existing_paths:
+                        all_previews.append(preview)
+                manifest["previews"] = self.curate_preview_assets(all_previews)
 
                 # Only regenerate sales_profile if process_project hasn't already upgraded it
                 # beyond the deterministic baseline (it generates with allow_llm=True).
