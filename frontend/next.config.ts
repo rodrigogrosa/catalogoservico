@@ -42,12 +42,15 @@ if (backendOrigin) {
 
 // Cobertura automática para qualquer URL *.code.run (Northflank)
 remotePatterns.push({ protocol: "https", hostname: "*.code.run" });
+// Domínio de produção fixo
+remotePatterns.push({ protocol: "https", hostname: "api.euachei3d.com.br" });
 
 // Backend origin para CSP (permite conectar ao backend em produção)
 // Também inclui *.code.run para cobrir o padrão de URL do Northflank quando
 // NEXT_PUBLIC_BACKEND_ORIGIN não está disponível em build-time.
 const backendCspOrigin = backendOriginRaw ?? "";
 const northflankCspOrigin = "https://*.code.run";
+const prodCspOrigin = "https://api.euachei3d.com.br";
 
 const securityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
@@ -62,7 +65,7 @@ const securityHeaders = [
     key: "Content-Security-Policy",
     value: [
       "default-src 'self'",
-      `connect-src 'self' ${backendCspOrigin} ${northflankCspOrigin} https://pollinations.ai https://api-inference.huggingface.co`,
+      `connect-src 'self' ${backendCspOrigin} ${northflankCspOrigin} ${prodCspOrigin} https://pollinations.ai https://api-inference.huggingface.co`,
       "img-src 'self' data: blob: https:",
       "media-src 'self' blob:",
       // WebGL / Three.js require worker-src blob:

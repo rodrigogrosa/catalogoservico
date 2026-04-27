@@ -11,7 +11,7 @@ import urllib.error
 import urllib.request
 
 
-DEFAULT_FRONTEND_URL = "https://http--frontend--pqz4rffnktnn.code.run"
+DEFAULT_FRONTEND_URL = "https://app.euachei3d.com.br"
 DEFAULT_USERNAME = "rodrigogrosa"
 DEFAULT_PASSWORD = "Violao2021@"
 

@@ -66,8 +66,8 @@ class Settings(BaseSettings):
     apple_oauth_redirect_uri: str = ""
     instagram_oauth_client_id: str = ""
     instagram_oauth_redirect_uri: str = ""
-    public_backend_origin: str = "http://127.0.0.1:8010"
-    public_frontend_origin: str = "http://127.0.0.1:3000"
+    public_backend_origin: str = "https://api.euachei3d.com.br"
+    public_frontend_origin: str = "https://app.euachei3d.com.br"
 
     @property
     def storage_root(self) -> Path:
