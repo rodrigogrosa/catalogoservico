@@ -1,8 +1,8 @@
 "use client";
 
-import { Suspense } from "react";
+import { Component, type ReactNode, Suspense } from "react";
 import { Canvas, useLoader } from "@react-three/fiber";
-import { Bounds, Environment, OrbitControls } from "@react-three/drei";
+import { Bounds, OrbitControls } from "@react-three/drei";
 import { MeshStandardMaterial } from "three";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
@@ -10,6 +10,25 @@ import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
 type Props = {
   url?: string;
 };
+
+// Catches WebGL init failures, loader errors, and any Three.js runtime error
+// so they never propagate to Next.js's global error boundary.
+class CanvasErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  render() {
+    if (this.state.failed) {
+      return (
+        <div className="flex h-[420px] items-center justify-center rounded-3xl border border-white/10 bg-black/20 text-sm text-slate-400">
+          Pré-visualização 3D indisponível neste ambiente.
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 function STLMesh({ url }: { url: string }) {
   const geometry = useLoader(STLLoader, url);
@@ -42,25 +61,30 @@ function Scene({ url }: { url: string }) {
 }
 
 export function ModelPreview({ url }: Props) {
-  if (!url) {
+  const extension = url?.split(".").pop()?.toLowerCase();
+  const is3D = extension === "stl" || extension === "obj";
+
+  if (!url || !is3D) {
     return (
       <div className="flex h-[420px] items-center justify-center rounded-3xl border border-white/10 bg-black/20 text-sm text-slate-400">
-        Preview 3D habilitado inicialmente para STL e OBJ.
+        Preview 3D habilitado para arquivos STL e OBJ.
       </div>
     );
   }
 
   return (
-    <div className="h-[420px] overflow-hidden rounded-3xl border border-white/10 bg-slate-950/50">
-      <Canvas camera={{ position: [140, 120, 160], fov: 45 }}>
-        <ambientLight intensity={1.1} />
-        <directionalLight position={[120, 80, 60]} intensity={1.4} />
-        <Suspense fallback={null}>
-          <Scene url={url} />
-          <Environment preset="city" />
-        </Suspense>
-        <OrbitControls enablePan enableZoom enableRotate />
-      </Canvas>
-    </div>
+    <CanvasErrorBoundary>
+      <div className="h-[420px] overflow-hidden rounded-3xl border border-white/10 bg-slate-950/50">
+        <Canvas camera={{ position: [140, 120, 160], fov: 45 }}>
+          <ambientLight intensity={1.1} />
+          <directionalLight position={[120, 80, 60]} intensity={1.4} castShadow />
+          <directionalLight position={[-80, 40, -60]} intensity={0.6} />
+          <Suspense fallback={null}>
+            <Scene url={url} />
+          </Suspense>
+          <OrbitControls enablePan enableZoom enableRotate />
+        </Canvas>
+      </div>
+    </CanvasErrorBoundary>
   );
 }
