@@ -40,12 +40,54 @@ if (backendOrigin) {
   remotePatterns.push(backendOrigin);
 }
 
+// Backend origin para CSP (permite conectar ao backend em produção)
+const backendCspOrigin = backendOriginRaw ?? "";
+
+const securityHeaders = [
+  { key: "X-Content-Type-Options", value: "nosniff" },
+  { key: "X-Frame-Options", value: "DENY" },
+  { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+  { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+  {
+    key: "Strict-Transport-Security",
+    value: "max-age=63072000; includeSubDomains; preload",
+  },
+  {
+    key: "Content-Security-Policy",
+    value: [
+      "default-src 'self'",
+      `connect-src 'self' ${backendCspOrigin} https://pollinations.ai https://api-inference.huggingface.co`,
+      "img-src 'self' data: blob: https:",
+      "media-src 'self' blob:",
+      // WebGL / Three.js require worker-src blob:
+      "worker-src 'self' blob:",
+      // Three.js e @react-three usam eval em alguns modos de dev
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+      "style-src 'self' 'unsafe-inline'",
+      "font-src 'self'",
+      "frame-ancestors 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+    ]
+      .filter(Boolean)
+      .join("; "),
+  },
+];
+
 const nextConfig: NextConfig = {
   experimental: {
     middlewareClientMaxBodySize: "200mb",
     serverActions: {
       bodySizeLimit: "200mb",
     },
+  },
+  async headers() {
+    return [
+      {
+        source: "/(.*)",
+        headers: securityHeaders,
+      },
+    ];
   },
   async rewrites() {
     if (!backendOriginRaw) {

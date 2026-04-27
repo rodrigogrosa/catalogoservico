@@ -3,9 +3,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import json
 import logging
+import os
 from pathlib import Path
 import re
 import shutil
+import time
 from typing import Any
 
 from fastapi import UploadFile
@@ -106,7 +108,11 @@ class StorageService:
         return self.save_uploads_sync(uploads, target_dir)
 
     def write_json(self, path: Path, payload: dict[str, Any]) -> None:
-        path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        encoded = json.dumps(payload, indent=2, ensure_ascii=False)
+        temp_path = path.with_name(f".{path.name}.tmp-{os.getpid()}-{int(time.time() * 1000)}")
+        temp_path.write_text(encoded, encoding="utf-8")
+        os.replace(temp_path, path)
 
     def next_generated_file(self, target_dir: Path, stem: str, suffix: str) -> Path:
         final_candidate = target_dir / f"{stem}_final{suffix}"
@@ -121,7 +127,15 @@ class StorageService:
             index += 1
 
     def read_json(self, path: Path) -> dict[str, Any]:
-        return json.loads(path.read_text(encoding="utf-8"))
+        last_error: Exception | None = None
+        for _ in range(4):
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except (FileNotFoundError, json.JSONDecodeError) as exc:
+                last_error = exc
+                time.sleep(0.05)
+        assert last_error is not None
+        raise last_error
 
     def manifest_path(self, project_root: Path) -> Path:
         return project_root / "project.json"
@@ -138,7 +152,15 @@ class StorageService:
     def save_project_manifest(self, project_root: Path, payload: dict[str, Any]) -> None:
         self.write_json(project_root / "project_manifest.json", payload)
 
+    def _safe_project_id(self, project_id: str) -> str:
+        """Rejeita qualquer project_id que contenha componentes de path traversal."""
+        sanitized = Path(project_id).name  # descarta qualquer prefixo de diretório
+        if sanitized != project_id or ".." in project_id or "/" in project_id or "\\" in project_id:
+            raise ValueError(f"project_id inválido: {project_id!r}")
+        return sanitized
+
     def load_manifest(self, project_id: str) -> dict[str, Any] | None:
+        project_id = self._safe_project_id(project_id)
         for project_dir in self.root.glob(f"*/{project_id}"):
             manifest = project_dir / "project.json"
             if manifest.exists():
@@ -146,6 +168,7 @@ class StorageService:
         return None
 
     def delete_project(self, project_id: str) -> bool:
+        project_id = self._safe_project_id(project_id)
         for project_dir in self.root.glob(f"*/{project_id}"):
             if not project_dir.is_dir():
                 continue

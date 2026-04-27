@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+import bcrypt
+
 from app.core.config import get_settings
 from app.core.permissions import PERMISSION_DEFINITIONS, ROLE_TEMPLATES, permission_keys, role_map
 from app.schemas.auth import AccessModelResponse, AuthUser, UserCreateRequest, UserRecordResponse, UserUpdateRequest
@@ -35,12 +37,27 @@ class UserService:
         return self.to_response(record) if record else None
 
     def authenticate_local(self, username: str, password: str) -> AuthUser | None:
-        record = self.load_records().get(self.record_key(username, "local"))
+        records = self.load_records()
+        record = records.get(self.record_key(username, "local"))
         if not record or record.get("status") != "active":
             return None
         stored_hash = str(record.get("password_hash") or "")
-        if not stored_hash or not hmac.compare_digest(stored_hash, self.hash_password(password)):
+        if not stored_hash:
             return None
+
+        # Migração transparente: hash legado SHA256 (64 hex chars sem prefixo)
+        if not stored_hash.startswith("$2b$") and not stored_hash.startswith("$2a$"):
+            legacy_hash = hashlib.sha256(
+                f"{self.settings.auth_token_secret}:{password}".encode("utf-8")
+            ).hexdigest()
+            if not hmac.compare_digest(stored_hash, legacy_hash):
+                return None
+            # Promove para bcrypt na primeira autenticação
+            record["password_hash"] = self.hash_password(password)
+        else:
+            if not bcrypt.checkpw(password.encode("utf-8"), stored_hash.encode("utf-8")):
+                return None
+
         record["last_login_at"] = datetime.now(tz=timezone.utc).isoformat()
         self.save_records({**self.load_records(), self.record_key(username, "local"): record})
         return self.to_auth_user(record)
@@ -221,5 +238,4 @@ class UserService:
         return f"{provider.strip().lower()}::{username.strip().lower()}"
 
     def hash_password(self, password: str) -> str:
-        salted = f"{self.settings.auth_token_secret}:{password}".encode("utf-8")
-        return hashlib.sha256(salted).hexdigest()
+        return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode("utf-8")

@@ -17,9 +17,17 @@ export type AuthSession = {
 
 const AUTH_STORAGE_KEY = "snapmaker3d.auth.session";
 
-export function getStoredAuthSession(): AuthSession | null {
+// sessionStorage: tokens não persistem entre abas/janelas e são limpos ao fechar o browser.
+// Isso reduz a superfície de ataque de XSS comparado ao localStorage.
+function storage(): Storage | null {
   if (typeof window === "undefined") return null;
-  const raw = window.localStorage.getItem(AUTH_STORAGE_KEY);
+  return window.sessionStorage;
+}
+
+export function getStoredAuthSession(): AuthSession | null {
+  const store = storage();
+  if (!store) return null;
+  const raw = store.getItem(AUTH_STORAGE_KEY);
   if (!raw) return null;
   try {
     const session = JSON.parse(raw) as AuthSession;
@@ -39,11 +47,13 @@ export function getStoredAuthToken(): string | null {
 }
 
 export function saveStoredAuthSession(session: AuthSession) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session));
+  const store = storage();
+  if (!store) return;
+  store.setItem(AUTH_STORAGE_KEY, JSON.stringify(session));
 }
 
 export function clearStoredAuthSession() {
-  if (typeof window === "undefined") return;
-  window.localStorage.removeItem(AUTH_STORAGE_KEY);
+  const store = storage();
+  if (!store) return;
+  store.removeItem(AUTH_STORAGE_KEY);
 }

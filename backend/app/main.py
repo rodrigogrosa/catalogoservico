@@ -39,6 +39,23 @@ app.include_router(api_router, prefix="/api/v1")
 app.mount("/storage", StaticFiles(directory=settings.storage_root, check_dir=False), name="storage")
 
 
+_SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+    "Cache-Control": "no-store",
+}
+
+
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    response = await call_next(request)
+    for header, value in _SECURITY_HEADERS.items():
+        response.headers.setdefault(header, value)
+    return response
+
+
 @app.middleware("http")
 async def request_logging_middleware(request: Request, call_next):
     request_id = request.headers.get("x-request-id") or uuid4().hex
