@@ -4,7 +4,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from app.services.local_llm_service import LocalLlmService
+from app.core.config import get_settings
+from app.services.free_ai_service import FreeAiService
 
 
 class SalesService:
@@ -85,6 +86,10 @@ bullet_points deve ter no maximo 5 itens. hashtags deve ter no maximo 10 itens.
             "reseller_margin_percent": 25,
         },
     }
+
+    def __init__(self) -> None:
+        self.settings = get_settings()
+        self.free_ai = FreeAiService(self.settings)
 
     def build_sales_profile(self, manifest: dict[str, Any], *, allow_llm: bool = True) -> dict[str, Any]:
         metadata = manifest.get("metadata") or {}
@@ -211,9 +216,8 @@ bullet_points deve ter no maximo 5 itens. hashtags deve ter no maximo 10 itens.
         fallback["copy_source"] = "deterministic"
         if not allow_llm:
             return fallback
-        llm = LocalLlmService()
-        if not llm.is_available():
-            return fallback
+
+        preview_image = self._resolve_preview_image_path(manifest)
         payload = {
             "project_name": project_name,
             "material": material,
@@ -222,15 +226,33 @@ bullet_points deve ter no maximo 5 itens. hashtags deve ter no maximo 10 itens.
             "suggested_price_brl": suggested_price,
             "source_ecosystem": manifest.get("source_ecosystem"),
             "known_character_hint": character,
+            "mesh_metrics": (manifest.get("metadata") or {}).get("mesh_metrics", {}),
+            "detected_files": ((manifest.get("metadata") or {}).get("parsing") or {}).get("detected_files", []),
         }
-        response = llm.generate_json(
+
+        response, ai_meta = self.free_ai.generate_json_with_fallback(
             system_prompt=self.MARKETPLACE_COPY_PROMPT,
             user_prompt=json.dumps(payload, ensure_ascii=False),
             fallback=fallback,
+            image_path=preview_image,
         )
         normalized = self._normalize_commerce_content(response, fallback)
-        normalized["copy_source"] = "ollama" if response is not fallback else "deterministic"
+        normalized["copy_source"] = "ia_fallback_chain" if response is not fallback else "deterministic"
+        normalized["ai_generation"] = ai_meta
         return normalized
+
+    def _resolve_preview_image_path(self, manifest: dict[str, Any]) -> Path | None:
+        for preview in manifest.get("previews") or []:
+            raw = str(preview.get("path") or "")
+            if not raw:
+                continue
+            if raw.startswith("/storage/"):
+                candidate = self.settings.storage_root / raw.split("/storage/", 1)[1]
+            else:
+                candidate = Path(raw)
+            if candidate.exists() and candidate.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}:
+                return candidate
+        return None
 
     def _fallback_commerce_content(
         self,

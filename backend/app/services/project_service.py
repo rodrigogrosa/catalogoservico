@@ -4,7 +4,9 @@ import asyncio
 from datetime import datetime, timezone
 import logging
 from pathlib import Path
+import threading
 from urllib.error import HTTPError, URLError
+from urllib.parse import unquote, urlparse
 from urllib.request import Request, urlopen
 from typing import Any
 
@@ -26,6 +28,7 @@ from app.services.audit_service import AuditService
 from app.services.bundle_service import BundleService
 from app.services.checksum_service import ChecksumService
 from app.services.format_service import FormatService
+from app.services.free_ai_service import FreeAiService
 from app.services.knowledge_service import KnowledgeService
 from app.services.local_llm_service import LocalLlmService
 from app.services.manifest_service import ManifestService
@@ -55,6 +58,7 @@ class ProjectService:
         self.orchestrator = OrchestratorAgent()
         self.qa_agent = QATechnicalAgent()
         self.local_llm = LocalLlmService()
+        self.free_ai = FreeAiService(self.settings, llm_service=self.local_llm)
         self.safe_parser = SafeParserService()
         self.sales_service = SalesService()
         self.naming_service = ProjectNamingService(self.local_llm, self.sales_service)
@@ -241,6 +245,7 @@ class ProjectService:
                 "limitations": parser_result.errors.copy(),
                 "user_answers": [],
                 "execution_snapshot": {},
+                "ai_media_pipeline": {"status": "scheduled", "generated_count": 0, "attempts": []},
             },
             "processing_stages": self.build_initial_stages(now),
             "stage_metrics": [],
@@ -268,6 +273,7 @@ class ProjectService:
         manifest["manifest"] = project_manifest
         manifest["logs"] = [{"label": "processing.log", "path": self.storage.to_storage_url(layout["folders"]["logs"] / "processing.log"), "kind": "log"}]
         self.storage.save_manifest(manifest)
+        self.schedule_post_import_ai_enrichment(layout["version_name"])
         logger.info(
             "project_create_completed",
             extra={
@@ -449,7 +455,7 @@ class ProjectService:
         if manifest is None:
             return None
         self.ensure_preview_fields(manifest, persist=True, extract_missing=True, generate_marketplace=False)
-        self.ensure_sales_profile(manifest, persist=True, allow_llm=True)
+        self.ensure_sales_profile(manifest, persist=True, allow_llm=False)
         manifest_path = Path(manifest["storage_path"]) / "project_manifest.json"
         if manifest_path.exists():
             manifest["manifest"] = self.storage.read_json(manifest_path)
@@ -872,6 +878,66 @@ class ProjectService:
         deduped = {f"{item['label']}::{item['path']}": item for item in preview_assets}
         return list(deduped.values())
 
+    def enrich_previews_with_ai(
+        self,
+        *,
+        previews: list[dict[str, str]],
+        previews_dir: Path,
+        source_files: list[Path],
+        project_name: str,
+        detected: dict[str, Any],
+    ) -> dict[str, Any]:
+        image_candidates: list[Path] = []
+        for preview in previews:
+            raw_path = str(preview.get("path") or "")
+            if not raw_path:
+                continue
+            if raw_path.startswith("/storage/"):
+                candidate = self.settings.storage_root / raw_path.split("/storage/", 1)[1]
+            else:
+                candidate = Path(raw_path)
+            if candidate.exists() and candidate.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}:
+                image_candidates.append(candidate)
+        if not image_candidates:
+            return {"enabled": self.free_ai.is_enabled(), "generated_count": 0, "attempts": []}
+
+        source_context = " ".join(file_path.suffix.lower().lstrip(".") for file_path in source_files if file_path.suffix)
+        context_text = (
+            f"produto 3D para venda online, ecossistema {detected.get('source_ecosystem', 'generic')}, "
+            f"formatos detectados: {source_context or 'desconhecido'}"
+        )
+        try:
+            generated_paths, meta = self.free_ai.generate_marketplace_images(
+                source_image=image_candidates[0],
+                output_dir=previews_dir,
+                project_name=project_name,
+                context_text=context_text,
+                count=1,
+            )
+            for path in generated_paths:
+                previews.append(
+                    {
+                        "label": path.name,
+                        "path": self.storage.to_storage_url(path),
+                        "kind": "marketplace_preview",
+                    }
+                )
+            return {
+                "enabled": True,
+                "generated_count": len(generated_paths),
+                **meta,
+            }
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "ai_preview_enrichment_failed",
+                extra={"project_name": project_name, "error": str(exc)},
+            )
+            return {
+                "enabled": self.free_ai.is_enabled(),
+                "generated_count": 0,
+                "attempts": [{"provider": "pipeline", "status": "failed", "error": str(exc)}],
+            }
+
     def resolve_preview_url(self, previews: list[dict[str, Any]] | None, fallback_file: Path | None = None) -> str | None:
         preview_url = self.preview_service.choose_primary_preview_url(previews)
         if preview_url:
@@ -949,9 +1015,20 @@ class ProjectService:
                 force=True,
             )
         )
+        ai_media_meta = self.enrich_previews_with_ai(
+            previews=preview_assets,
+            previews_dir=previews_dir,
+            source_files=source_files,
+            project_name=str(manifest.get("name") or manifest.get("slug") or "Projeto 3D"),
+            detected={
+                "source_ecosystem": manifest.get("source_ecosystem", "generic"),
+            },
+        )
+        manifest.setdefault("metadata", {})
+        manifest["metadata"]["ai_media_pipeline"] = ai_media_meta
         manifest["previews"] = list({f"{item['label']}::{item['path']}": item for item in preview_assets}.values())
         self.ensure_preview_fields(manifest, persist=True, extract_missing=False, generate_marketplace=False)
-        self.ensure_sales_profile(manifest, persist=True, allow_llm=True)
+        self.ensure_sales_profile(manifest, persist=True, allow_llm=False)
         manifest_path = Path(manifest["storage_path"]) / "project_manifest.json"
         if manifest_path.exists():
             manifest["manifest"] = self.storage.read_json(manifest_path)
@@ -975,12 +1052,45 @@ class ProjectService:
         if (
             isinstance(profile, dict)
             and profile.get("pricing_version") == self.sales_service.PRICING_VERSION
-            and (not allow_llm or profile.get("copy_source") == "ollama")
+            and (not allow_llm or profile.get("copy_source") in {"ollama", "ia_fallback_chain"})
         ):
             return
         manifest["sales_profile"] = self.sales_service.build_sales_profile(manifest, allow_llm=allow_llm)
         if persist:
             self.storage.save_manifest(manifest)
+
+    def schedule_post_import_ai_enrichment(self, project_id: str) -> None:
+        def run() -> None:
+            try:
+                manifest = self.storage.load_manifest(project_id)
+                if manifest is None:
+                    return
+                project_root = Path(manifest["storage_path"])
+                previews_dir = project_root / "previews"
+                source_files = [Path(file_info["path"]) for file_info in manifest.get("input_files", []) if file_info.get("path")]
+                detected = {"source_ecosystem": manifest.get("source_ecosystem", "generic")}
+                preview_assets = list(manifest.get("previews") or [])
+                if not preview_assets:
+                    preview_assets = self.preview_service.collect_existing_previews(previews_dir, self.settings.storage_root)
+                ai_meta = self.enrich_previews_with_ai(
+                    previews=preview_assets,
+                    previews_dir=previews_dir,
+                    source_files=source_files,
+                    project_name=str(manifest.get("name") or manifest.get("slug") or "Projeto 3D"),
+                    detected=detected,
+                )
+                manifest.setdefault("metadata", {})
+                manifest["metadata"]["ai_media_pipeline"] = {"status": "completed", **ai_meta}
+                manifest["previews"] = list({f"{item['label']}::{item['path']}": item for item in preview_assets}.values())
+                self.ensure_sales_profile(manifest, persist=False, allow_llm=True)
+                manifest["updated_at"] = datetime.now(tz=timezone.utc).isoformat()
+                self.storage.save_manifest(manifest)
+                self.append_log(project_root / "logs", "Pós-importação: enriquecimento de mídia e copy concluído.", stage_key="post_import_ai", status="completed")
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("post_import_ai_enrichment_failed", extra={"project_id": project_id, "error": str(exc)})
+
+        worker = threading.Thread(target=run, daemon=True, name=f"post-import-ai-{project_id}")
+        worker.start()
 
     def collect_generated_artifacts(self, outputs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         generated: list[dict[str, Any]] = []

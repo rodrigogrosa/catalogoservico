@@ -340,6 +340,29 @@ Variáveis principais:
 - `OLLAMA_ENABLED`
 - `OLLAMA_BASE_URL`
 - `OLLAMA_MODEL`
+- `FREE_AI_ENABLED`
+- `FREE_AI_EXTERNAL_ENABLED`
+- `FREE_AI_PROVIDER_ORDER`
+- `AI_GENERATION_TIMEOUT_SECONDS`
+- `POLLINATIONS_TEXT_MODEL`
+- `POLLINATIONS_IMAGE_MODEL`
+- `HUGGINGFACE_API_TOKEN`
+- `HUGGINGFACE_TEXT_MODEL`
+- `HUGGINGFACE_IMAGE_MODEL`
+
+### IA gratuita com fallback no upload
+
+Ao adicionar um novo projeto, o backend agora roda uma cadeia de IA para:
+
+- enriquecer copy comercial usando metadados do projeto e preview da peça;
+- gerar imagem comercial adicional para anúncio (`marketplace_ai_01.jpg`);
+- trocar automaticamente de provedor em falha/quota.
+
+Ordem padrão:
+
+- `ollama` (local, sem custo recorrente)
+- `pollinations` (API pública gratuita)
+- `huggingface` (API com token, free tier quando disponível)
 
 ## Execução local
 
