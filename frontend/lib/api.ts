@@ -444,6 +444,23 @@ export type SocialLoginProviderConfig = {
   notes: string[];
 };
 
+export type AiProviderState = {
+  key: string;
+  label: string;
+  provider_type: "local" | "external";
+  enabled: boolean;
+  description: string;
+};
+
+export type AiRuntimeSettings = {
+  free_ai_enabled: boolean;
+  external_providers_enabled: boolean;
+  provider_order: string[];
+  providers: AiProviderState[];
+  updated_at?: string | null;
+  notes: string[];
+};
+
 export type UserCreatePayload = {
   username: string;
   display_name: string;
@@ -765,6 +782,29 @@ export async function updateSocialLoginProvider(
     body: JSON.stringify(payload),
   });
   if (!response.ok) throw await parseApiError(response, "Falha ao salvar configuração de login social.");
+  return response.json();
+}
+
+export async function fetchAiRuntimeSettings(): Promise<AiRuntimeSettings> {
+  const response = await apiFetchResilient("/ai-settings", { cache: "no-store", headers: authHeaders() });
+  if (!response.ok) throw await parseApiError(response, "Falha ao carregar provedores externos de IA.");
+  return response.json();
+}
+
+export async function updateAiRuntimeSettings(payload: {
+  free_ai_enabled?: boolean;
+  external_providers_enabled?: boolean;
+  provider_order?: string[];
+}): Promise<AiRuntimeSettings> {
+  const response = await apiFetchResilient("/ai-settings", {
+    method: "PUT",
+    headers: {
+      ...authHeaders(),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw await parseApiError(response, "Falha ao salvar provedores externos de IA.");
   return response.json();
 }
 

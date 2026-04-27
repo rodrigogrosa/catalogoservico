@@ -20,6 +20,8 @@ PERMISSION_DEFINITIONS: list[PermissionDefinition] = [
     PermissionDefinition(key="stores.publish", label="Publicar rascunhos", description="Gera payloads de publicação para marketplaces.", category="Lojas"),
     PermissionDefinition(key="social_login.view", label="Ver login social", description="Consulta configuração dos provedores sociais.", category="Acesso"),
     PermissionDefinition(key="social_login.manage", label="Gerenciar login social", description="Configura provedores, segredos e botões sociais.", category="Acesso"),
+    PermissionDefinition(key="ai_settings.view", label="Ver provedores IA", description="Consulta status e cadeia de fallback dos provedores de IA.", category="IA"),
+    PermissionDefinition(key="ai_settings.manage", label="Gerenciar provedores IA", description="Ativa/desativa provedores de IA externos e ordem de fallback.", category="IA"),
     PermissionDefinition(key="users.view", label="Ver usuários", description="Consulta usuários, papéis e permissões.", category="Usuários"),
     PermissionDefinition(key="users.manage", label="Gerenciar usuários", description="Cria, edita, desativa e ajusta permissões.", category="Usuários"),
 ]
@@ -53,6 +55,8 @@ ROLE_TEMPLATES: list[RoleDefinition] = [
             "stores.publish",
             "social_login.view",
             "social_login.manage",
+            "ai_settings.view",
+            "ai_settings.manage",
             "users.view",
             "users.manage",
         ],

@@ -5,11 +5,13 @@ import type { ReactNode } from "react";
 
 import { BrandMark } from "@/components/brand-mark";
 import { useAuth } from "@/components/auth-provider";
+import { PERMISSIONS } from "@/lib/permissions";
 
 type NavItem = {
   label: string;
   href: string;
   helper: string;
+  permission: string;
 };
 
 type Props = {
@@ -20,17 +22,20 @@ type Props = {
 };
 
 const navItems: NavItem[] = [
-  { label: "Visão geral", href: "/", helper: "Comando executivo" },
-  { label: "Novo projeto", href: "/new-project", helper: "Entrada e importação" },
-  { label: "Catálogo", href: "/catalog", helper: "Portfólio e vendas" },
-  { label: "Login social", href: "/social-login", helper: "Acesso e identidade" },
-  { label: "Lojas", href: "/stores", helper: "Marketplaces e canais" },
-  { label: "Fila", href: "/queue", helper: "Operação em andamento" },
-  { label: "Relatórios", href: "/reports", helper: "Rastreabilidade" },
+  { label: "Visão geral", href: "/", helper: "Comando executivo", permission: PERMISSIONS.dashboardView },
+  { label: "Novo projeto", href: "/new-project", helper: "Entrada e importação", permission: PERMISSIONS.projectsCreate },
+  { label: "Catálogo", href: "/catalog", helper: "Portfólio e vendas", permission: PERMISSIONS.catalogView },
+  { label: "Login social", href: "/social-login", helper: "Acesso e identidade", permission: PERMISSIONS.socialLoginView },
+  { label: "Provedores IA", href: "/ai-settings", helper: "Fallback externo", permission: PERMISSIONS.aiSettingsView },
+  { label: "Lojas", href: "/stores", helper: "Marketplaces e canais", permission: PERMISSIONS.storesView },
+  { label: "Fila", href: "/queue", helper: "Operação em andamento", permission: PERMISSIONS.queueView },
+  { label: "Relatórios", href: "/reports", helper: "Rastreabilidade", permission: PERMISSIONS.reportsView },
+  { label: "Usuários", href: "/users", helper: "Perfis e acessos", permission: PERMISSIONS.usersView },
 ];
 
 export function AppShell({ children, active = "Visão geral", title = "Portal EuAchei3D", subtitle }: Props) {
-  const { logout, user } = useAuth();
+  const { can, logout, user } = useAuth();
+  const visibleNavItems = navItems.filter((item) => can(item.permission));
 
   return (
     <main className="min-h-screen">
@@ -47,7 +52,7 @@ export function AppShell({ children, active = "Visão geral", title = "Portal Eu
             </div>
 
             <nav className="mt-5 grid content-start gap-1.5">
-              {navItems.map((item) => {
+              {visibleNavItems.map((item) => {
                 const selected = item.label === active;
                 return (
                   <Link key={item.label} href={item.href} className={`nav-link ${selected ? "nav-link-active" : ""}`}>
@@ -66,7 +71,7 @@ export function AppShell({ children, active = "Visão geral", title = "Portal Eu
                 <div>
                   <p className="brand-kicker">Sessão</p>
                   <p className="mt-2 truncate text-sm font-semibold text-white">{user?.display_name ?? "Usuário"}</p>
-                  <p className="text-xs text-slate-400">{user?.role === "master" ? "Administrador master" : "Acesso autenticado"}</p>
+                  <p className="text-xs text-slate-400">{user?.role_label ?? (user?.role === "master" ? "Administrador master" : "Acesso autenticado")}</p>
                 </div>
                 <div>
                   <p className="brand-kicker">Pasta</p>
@@ -94,12 +99,16 @@ export function AppShell({ children, active = "Visão geral", title = "Portal Eu
               </div>
 
               <div className="flex flex-wrap items-center gap-3">
-                <Link href="/new-project" className="portal-action portal-action-primary">
-                  Novo projeto
-                </Link>
-                <Link href="/catalog" className="portal-action">
-                  Catálogo
-                </Link>
+                {can(PERMISSIONS.projectsCreate) ? (
+                  <Link href="/new-project" className="portal-action portal-action-primary">
+                    Novo projeto
+                  </Link>
+                ) : null}
+                {can(PERMISSIONS.catalogView) ? (
+                  <Link href="/catalog" className="portal-action">
+                    Catálogo
+                  </Link>
+                ) : null}
                 <button type="button" onClick={logout} className="portal-action xl:hidden">
                   Sair
                 </button>
@@ -107,7 +116,7 @@ export function AppShell({ children, active = "Visão geral", title = "Portal Eu
             </div>
 
             <div className="mt-5 flex gap-2 overflow-x-auto xl:hidden">
-              {navItems.map((item) => {
+              {visibleNavItems.map((item) => {
                 const selected = item.label === active;
                 return (
                   <Link

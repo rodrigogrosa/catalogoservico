@@ -7,8 +7,9 @@ from app.core.config import Settings
 from app.services.free_ai_service import FreeAiService
 
 
-def test_provider_order_respects_external_toggle() -> None:
+def test_provider_order_respects_external_toggle(tmp_path: Path) -> None:
     disabled_external = Settings(
+        storage_root=tmp_path,
         free_ai_enabled=True,
         free_ai_external_enabled=False,
         free_ai_provider_order="ollama,pollinations,huggingface",
@@ -17,6 +18,7 @@ def test_provider_order_respects_external_toggle() -> None:
     assert service.provider_order() == ["ollama"]
 
     enabled_external = Settings(
+        storage_root=tmp_path,
         free_ai_enabled=True,
         free_ai_external_enabled=True,
         free_ai_provider_order="ollama,pollinations,huggingface,ollama",
@@ -25,8 +27,9 @@ def test_provider_order_respects_external_toggle() -> None:
     assert service.provider_order() == ["ollama", "pollinations", "huggingface"]
 
 
-def test_json_generation_falls_back_to_next_provider(monkeypatch) -> None:
+def test_json_generation_falls_back_to_next_provider(monkeypatch, tmp_path: Path) -> None:
     settings = Settings(
+        storage_root=tmp_path,
         free_ai_enabled=True,
         free_ai_external_enabled=True,
         free_ai_provider_order="ollama,pollinations,huggingface",

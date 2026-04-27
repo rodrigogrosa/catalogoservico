@@ -11,6 +11,7 @@ import httpx
 from PIL import Image, ImageEnhance, ImageFilter
 
 from app.core.config import Settings, get_settings
+from app.services.ai_settings_service import AiSettingsService
 from app.services.local_llm_service import LocalLlmService
 
 
@@ -38,18 +39,24 @@ class FreeAiService:
             timeout=httpx.Timeout(timeout_seconds, connect=3.0, read=timeout_seconds, write=timeout_seconds, pool=5.0)
         )
         self.llm = llm_service or LocalLlmService(self.settings)
+        self.ai_settings = AiSettingsService(self.settings)
 
-    def is_enabled(self) -> bool:
-        return bool(self.settings.free_ai_enabled)
+    def runtime_preferences(self) -> dict[str, Any]:
+        return self.ai_settings.runtime_preferences()
 
-    def provider_order(self) -> list[str]:
-        raw = str(self.settings.free_ai_provider_order or "").strip()
+    def is_enabled(self, runtime: dict[str, Any] | None = None) -> bool:
+        runtime_data = runtime or self.runtime_preferences()
+        return bool(runtime_data.get("free_ai_enabled", False))
+
+    def provider_order(self, runtime: dict[str, Any] | None = None) -> list[str]:
+        runtime_data = runtime or self.runtime_preferences()
+        raw = ",".join(runtime_data.get("provider_order", []))
         known = {"ollama", "pollinations", "huggingface"}
         providers = [item.strip().lower() for item in raw.split(",") if item.strip()]
         ordered = [provider for provider in providers if provider in known]
         if not ordered:
             ordered = ["ollama", "pollinations", "huggingface"]
-        if not self.settings.free_ai_external_enabled:
+        if not bool(runtime_data.get("external_providers_enabled", False)):
             ordered = [provider for provider in ordered if provider == "ollama"]
         deduped: list[str] = []
         for provider in ordered:
@@ -65,18 +72,19 @@ class FreeAiService:
         fallback: dict[str, Any],
         image_path: Path | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        if not self.is_enabled():
+        runtime = self.runtime_preferences()
+        if not self.is_enabled(runtime):
             return fallback, {"selected_provider": "disabled", "attempts": []}
 
         attempts: list[dict[str, Any]] = []
-        for provider in self.provider_order():
+        for provider in self.provider_order(runtime):
             try:
                 if provider == "ollama":
                     data = self._generate_with_ollama(system_prompt, user_prompt, fallback, image_path=image_path)
                 elif provider == "pollinations":
-                    data = self._generate_with_pollinations(system_prompt, user_prompt)
+                    data = self._generate_with_pollinations(system_prompt, user_prompt, runtime=runtime)
                 elif provider == "huggingface":
-                    data = self._generate_with_huggingface(system_prompt, user_prompt)
+                    data = self._generate_with_huggingface(system_prompt, user_prompt, runtime=runtime)
                 else:
                     continue
                 if isinstance(data, dict) and data:
@@ -98,7 +106,8 @@ class FreeAiService:
         context_text: str,
         count: int = 2,
     ) -> tuple[list[Path], dict[str, Any]]:
-        if not self.is_enabled() or not source_image.exists():
+        runtime = self.runtime_preferences()
+        if not self.is_enabled(runtime) or not source_image.exists():
             return [], {"selected_provider": "disabled", "attempts": []}
 
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -110,14 +119,14 @@ class FreeAiService:
         for index, prompt in enumerate(prompts, start=1):
             target = output_dir / f"marketplace_ai_{index:02d}.jpg"
             produced = False
-            for provider in self.provider_order():
+            for provider in self.provider_order(runtime):
                 if provider not in {"pollinations", "huggingface"}:
                     continue
                 try:
                     if provider == "pollinations":
-                        self._generate_image_pollinations(prompt, target)
+                        self._generate_image_pollinations(prompt, target, runtime=runtime)
                     else:
-                        self._generate_image_huggingface(prompt, target)
+                        self._generate_image_huggingface(prompt, target, runtime=runtime)
                     produced = True
                     attempts.append({"provider": provider, "status": "ok", "target": target.name})
                     break
@@ -191,8 +200,8 @@ class FreeAiService:
             fallback=fallback,
         )
 
-    def _generate_with_pollinations(self, system_prompt: str, user_prompt: str) -> dict[str, Any]:
-        model = str(self.settings.pollinations_text_model or "openai-large").strip()
+    def _generate_with_pollinations(self, system_prompt: str, user_prompt: str, *, runtime: dict[str, Any]) -> dict[str, Any]:
+        model = str(runtime.get("pollinations_text_model") or self.settings.pollinations_text_model or "openai-large").strip()
         prompt = (
             f"{system_prompt}\n\n"
             "Responda exclusivamente em JSON válido. Não use markdown.\n\n"
@@ -204,11 +213,11 @@ class FreeAiService:
         response.raise_for_status()
         return self._extract_json_dict(response.text)
 
-    def _generate_with_huggingface(self, system_prompt: str, user_prompt: str) -> dict[str, Any]:
-        token = str(self.settings.huggingface_api_token or "").strip()
+    def _generate_with_huggingface(self, system_prompt: str, user_prompt: str, *, runtime: dict[str, Any]) -> dict[str, Any]:
+        token = str(runtime.get("huggingface_api_token") or self.settings.huggingface_api_token or "").strip()
         if not token:
             raise ValueError("huggingface_api_token ausente")
-        model = str(self.settings.huggingface_text_model or "").strip()
+        model = str(runtime.get("huggingface_text_model") or self.settings.huggingface_text_model or "").strip()
         prompt = (
             f"{system_prompt}\n\n"
             "Responda exclusivamente em JSON válido. Não use markdown.\n\n"
@@ -255,8 +264,8 @@ class FreeAiService:
             raise ValueError("json não é objeto")
         return parsed
 
-    def _generate_image_pollinations(self, prompt: str, target: Path) -> None:
-        model = str(self.settings.pollinations_image_model or "flux").strip()
+    def _generate_image_pollinations(self, prompt: str, target: Path, *, runtime: dict[str, Any]) -> None:
+        model = str(runtime.get("pollinations_image_model") or self.settings.pollinations_image_model or "flux").strip()
         encoded = quote(prompt, safe="")
         url = f"{self.POLLINATIONS_IMAGE_URL}/{encoded}"
         response = self.client.get(
@@ -274,11 +283,11 @@ class FreeAiService:
         response.raise_for_status()
         self._write_and_validate_image(response.content, target)
 
-    def _generate_image_huggingface(self, prompt: str, target: Path) -> None:
-        token = str(self.settings.huggingface_api_token or "").strip()
+    def _generate_image_huggingface(self, prompt: str, target: Path, *, runtime: dict[str, Any]) -> None:
+        token = str(runtime.get("huggingface_api_token") or self.settings.huggingface_api_token or "").strip()
         if not token:
             raise ValueError("huggingface_api_token ausente")
-        model = str(self.settings.huggingface_image_model or "").strip()
+        model = str(runtime.get("huggingface_image_model") or self.settings.huggingface_image_model or "").strip()
         response = self.client.post(
             f"https://api-inference.huggingface.co/models/{model}",
             headers={"Authorization": f"Bearer {token}", "Accept": "image/*"},

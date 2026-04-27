@@ -15,6 +15,8 @@ export const PERMISSIONS = {
   storesPublish: "stores.publish",
   socialLoginView: "social_login.view",
   socialLoginManage: "social_login.manage",
+  aiSettingsView: "ai_settings.view",
+  aiSettingsManage: "ai_settings.manage",
   usersView: "users.view",
   usersManage: "users.manage",
 } as const;
