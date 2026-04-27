@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     ollama_vision_model: str = ""
     ollama_timeout_seconds: float = 45.0
     free_ai_enabled: bool = True
-    free_ai_external_enabled: bool = False
+    free_ai_external_enabled: bool = True
     free_ai_provider_order: str = "ollama,pollinations,huggingface"
     ai_generation_timeout_seconds: float = 6.0
     pollinations_image_model: str = "flux"

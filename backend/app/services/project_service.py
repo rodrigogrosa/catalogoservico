@@ -1204,12 +1204,17 @@ class ProjectService:
 
     def ensure_sales_profile(self, manifest: dict[str, Any], *, persist: bool, allow_llm: bool = True) -> None:
         profile = manifest.get("sales_profile")
-        if (
-            isinstance(profile, dict)
-            and profile.get("pricing_version") == self.sales_service.PRICING_VERSION
-            and (not allow_llm or profile.get("copy_source") in {"ollama", "ia_fallback_chain"})
-        ):
-            return
+        version_ok = isinstance(profile, dict) and profile.get("pricing_version") == self.sales_service.PRICING_VERSION
+        if version_ok:
+            if not allow_llm:
+                return  # deterministic profile is sufficient when LLM is not requested
+            copy_source = profile.get("copy_source", "deterministic")
+            if copy_source in {"ollama", "ia_fallback_chain"}:
+                return  # already has AI-generated copy; no need to regenerate
+            # copy_source == "deterministic": try LLM upgrade only if any AI provider is active
+            runtime = self.free_ai.runtime_preferences() if hasattr(self, "free_ai") else {}
+            if not runtime.get("free_ai_enabled", False):
+                return  # AI is globally disabled; keep the deterministic profile
         manifest["sales_profile"] = self.sales_service.build_sales_profile(manifest, allow_llm=allow_llm)
         if persist:
             self.storage.save_manifest(manifest)
@@ -1217,18 +1222,19 @@ class ProjectService:
     def schedule_post_import_ai_enrichment(self, project_id: str) -> None:
         def run() -> None:
             try:
-                manifest = self.storage.load_manifest(project_id)
-                if manifest is None:
+                # Load initial snapshot only to obtain project paths and seed data for AI work.
+                initial = self.storage.load_manifest(project_id)
+                if initial is None:
                     return
-                project_root = Path(manifest["storage_path"])
+                project_root = Path(initial["storage_path"])
                 previews_dir = project_root / "previews"
-                source_files = [Path(file_info["path"]) for file_info in manifest.get("input_files", []) if file_info.get("path")]
-                detected = {"source_ecosystem": manifest.get("source_ecosystem", "generic")}
-                preview_assets = list(manifest.get("previews") or [])
+                source_files = [Path(file_info["path"]) for file_info in initial.get("input_files", []) if file_info.get("path")]
+                detected = {"source_ecosystem": initial.get("source_ecosystem", "generic")}
+                preview_assets = list(initial.get("previews") or [])
                 if not preview_assets:
                     preview_assets = self.preview_service.collect_existing_previews(previews_dir, self.settings.storage_root)
                 try:
-                    dimensions_mm = self.preview_dimensions_from_manifest(manifest)
+                    dimensions_mm = self.preview_dimensions_from_manifest(initial)
                     preview_assets.extend(
                         self.preview_service.generate_marketplace_ready_assets(
                             previews_dir,
@@ -1247,21 +1253,43 @@ class ProjectService:
                     previews=preview_assets,
                     previews_dir=previews_dir,
                     source_files=source_files,
-                    project_name=str(manifest.get("name") or manifest.get("slug") or "Projeto 3D"),
+                    project_name=str(initial.get("name") or initial.get("slug") or "Projeto 3D"),
                     detected=detected,
                 )
-                original_name_source = str(manifest.get("original_filename") or manifest.get("name") or "")
+                original_name_source = str(initial.get("original_filename") or initial.get("name") or "")
                 refined_name = self.make_friendly_project_name(
                     original_name_source,
                     previews=preview_assets,
                     allow_vision=True,
                 )
+                curated_previews = self.curate_preview_assets(preview_assets, previews_dir=previews_dir)
+
+                # CRITICAL: Reload manifest fresh before saving to prevent overwriting results from
+                # process_project, which may have started or completed while AI work was running above.
+                # Only apply AI-enrichment-specific fields to the freshly loaded manifest.
+                manifest = self.storage.load_manifest(project_id)
+                if manifest is None:
+                    return
+
+                # process_project never updates the project name; always apply the AI-refined name.
                 if refined_name:
                     manifest["name"] = refined_name
                 manifest.setdefault("metadata", {})
                 manifest["metadata"]["ai_media_pipeline"] = {"status": "completed", **ai_meta}
-                manifest["previews"] = self.curate_preview_assets(preview_assets, previews_dir=previews_dir)
-                self.ensure_sales_profile(manifest, persist=False, allow_llm=True)
+
+                # Merge curated previews: add new AI-generated previews without removing those
+                # already present (including any added by the processing pipeline).
+                existing_preview_paths = {p.get("path") for p in manifest.get("previews") or []}
+                for preview in curated_previews:
+                    if preview.get("path") not in existing_preview_paths:
+                        manifest.setdefault("previews", []).append(preview)
+
+                # Only regenerate sales_profile if process_project hasn't already upgraded it
+                # beyond the deterministic baseline (it generates with allow_llm=True).
+                current_copy_source = (manifest.get("sales_profile") or {}).get("copy_source", "deterministic")
+                if current_copy_source == "deterministic":
+                    self.ensure_sales_profile(manifest, persist=False, allow_llm=True)
+
                 manifest["updated_at"] = datetime.now(tz=timezone.utc).isoformat()
                 self.storage.save_manifest(manifest)
                 self.append_log(project_root / "logs", "Pós-importação: enriquecimento de mídia e copy concluído.", stage_key="post_import_ai", status="completed")
