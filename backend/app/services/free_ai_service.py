@@ -112,13 +112,14 @@ class FreeAiService:
         context_text: str,
         count: int = 3,
     ) -> tuple[list[Path], dict[str, Any]]:
-        """Enhance and generate marketplace-ready images for a project.
+        """Enhance the real product images extracted from the project for marketplace use.
 
-        Provider chain per image (in order):
-        1. HuggingFace img2img — enhances the original extracted photo (requires API token)
-        2. Pollinations text-to-image — generates a styled product photo from description
-        3. HuggingFace text-to-image — secondary AI generation fallback
-        4. Deterministic PIL enhancement — always works, no external calls
+        IMPORTANT: This method ONLY enhances existing product images. It never generates
+        unrelated images from text prompts, which would produce results that don't represent
+        the actual product. Provider chain per image (in order):
+
+        1. HuggingFace img2img — AI enhancement of the real photo (requires API token)
+        2. Deterministic PIL enhancement — sharpening, white background, framing (always works)
         """
         runtime = self.runtime_preferences()
         valid_sources = [p for p in source_images if p.exists()]
@@ -130,15 +131,14 @@ class FreeAiService:
         generated: list[Path] = []
         primary_source = valid_sources[0]
         subject_hint = self.describe_subject_for_prompt(primary_source, project_name)
-        prompts = self.build_image_prompts(subject_hint=subject_hint, context_text=context_text, count=count)
 
-        for index, prompt in enumerate(prompts, start=1):
-            # Cycle through available source images so each gets enhanced
+        for index in range(1, count + 1):
+            # Cycle through available source images so each gets its own enhanced variant
             source = valid_sources[(index - 1) % len(valid_sources)]
             target = output_dir / f"marketplace_ai_{index:02d}.jpg"
             produced = False
 
-            # Provider 1: HuggingFace img2img — enhances the real extracted photo
+            # Provider 1: HuggingFace img2img — AI-powered enhancement of the real photo
             try:
                 self._enhance_image_huggingface_img2img(source, target, runtime=runtime)
                 produced = True
@@ -147,27 +147,13 @@ class FreeAiService:
                 attempts.append({"provider": "huggingface_img2img", "status": "failed", "target": target.name, "error": str(exc)})
 
             if not produced:
-                # Providers 2 & 3: text-to-image generation (Pollinations → HuggingFace)
-                for provider in self.provider_order(runtime):
-                    if provider not in {"pollinations", "huggingface"}:
-                        continue
-                    try:
-                        if provider == "pollinations":
-                            self._generate_image_pollinations(prompt, target, runtime=runtime)
-                        else:
-                            self._generate_image_huggingface(prompt, target, runtime=runtime)
-                        produced = True
-                        attempts.append({"provider": provider, "status": "ok", "target": target.name})
-                        break
-                    except Exception as exc:  # noqa: BLE001
-                        attempts.append({"provider": provider, "status": "failed", "target": target.name, "error": str(exc)})
-
-            if not produced:
-                # Provider 4: deterministic PIL enhancement — never fails
+                # Provider 2: deterministic PIL — always preserves the real product photo
                 self._deterministic_image_fallback(source, target)
                 attempts.append({"provider": "deterministic", "status": "ok", "target": target.name})
+                produced = True
 
-            generated.append(target)
+            if produced:
+                generated.append(target)
 
         selected = next((item["provider"] for item in attempts if item.get("status") == "ok"), "deterministic")
         return generated, {"selected_provider": selected, "attempts": attempts, "subject_hint": subject_hint}
@@ -376,14 +362,35 @@ class FreeAiService:
             raise ValueError(f"arquivo de imagem inválido: {exc}") from exc
 
     def _deterministic_image_fallback(self, source_image: Path, target: Path) -> None:
+        """Enhances the real product image without any external API calls.
+
+        Places the product centered on a clean white 1600×1600 canvas while
+        preserving aspect ratio, then applies marketplace-grade sharpening.
+        """
+        SIZE = 1600
+        PADDING = 0.10  # 10% padding around the product inside the canvas
+
         with Image.open(source_image) as image:
             image.load()
             rgba = image.convert("RGBA")
-            resized = rgba.resize((1600, 1600), Image.Resampling.LANCZOS)
-            background = Image.new("RGBA", resized.size, (248, 248, 246, 255))
-            composed = Image.alpha_composite(background, resized)
-            rgb = composed.convert("RGB")
-            rgb = ImageEnhance.Contrast(rgb).enhance(1.06)
-            rgb = ImageEnhance.Sharpness(rgb).enhance(1.22)
-            rgb = rgb.filter(ImageFilter.UnsharpMask(radius=1.4, percent=130, threshold=2))
-            rgb.save(target, format="JPEG", quality=95, subsampling=0, optimize=True)
+
+        # Fit the image inside the canvas while preserving aspect ratio
+        w, h = rgba.size
+        available = int(SIZE * (1.0 - PADDING * 2))
+        scale = available / max(w, h, 1)
+        new_w = max(1, int(w * scale))
+        new_h = max(1, int(h * scale))
+        fitted = rgba.resize((new_w, new_h), Image.Resampling.LANCZOS)
+
+        canvas = Image.new("RGBA", (SIZE, SIZE), (255, 255, 255, 255))
+        offset_x = (SIZE - new_w) // 2
+        offset_y = (SIZE - new_h) // 2
+        canvas.paste(fitted, (offset_x, offset_y), mask=fitted)
+
+        rgb = canvas.convert("RGB")
+        rgb = ImageEnhance.Brightness(rgb).enhance(1.04)
+        rgb = ImageEnhance.Contrast(rgb).enhance(1.10)
+        rgb = ImageEnhance.Color(rgb).enhance(1.12)
+        rgb = ImageEnhance.Sharpness(rgb).enhance(1.40)
+        rgb = rgb.filter(ImageFilter.UnsharpMask(radius=1.6, percent=150, threshold=2))
+        rgb.save(target, format="JPEG", quality=96, subsampling=0, optimize=True)
