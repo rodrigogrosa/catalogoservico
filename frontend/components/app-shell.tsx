@@ -62,7 +62,7 @@ export function AppShell({ children, active = "Visão geral", title = "Portal Eu
 
   return (
     <main className="min-h-screen">
-      <div className="flex min-h-screen w-full">
+      <div className="shell-layout relative flex min-h-screen w-full">
         <aside className="shell-sidebar hidden w-[298px] shrink-0 border-r border-white/10 text-white xl:block">
           <div className="sticky top-0 flex h-screen flex-col px-5 py-5">
             <BrandMark />
@@ -101,25 +101,8 @@ export function AppShell({ children, active = "Visão geral", title = "Portal Eu
                       <span className="block">Configuração</span>
                       <span className="mt-0.5 block text-[0.68rem] font-medium tracking-[0.12em] text-slate-400">Acessos, integrações e IA</span>
                     </span>
-                    <span className="text-xs text-slate-400">{configOpen ? "−" : "+"}</span>
+                    <span className="text-xs text-slate-400">{configOpen ? "→" : "→"}</span>
                   </button>
-
-                  {configOpen ? (
-                    <div className="ml-3 grid gap-1 border-l border-white/15 pl-3">
-                      {visibleConfigItems.map((item) => {
-                        const selected = isItemActive(item);
-                        return (
-                          <Link key={item.label} href={item.href} className={`nav-link ${selected ? "nav-link-active" : ""}`}>
-                            <span>
-                              <span className="block">{item.label}</span>
-                              <span className="mt-0.5 block text-[0.66rem] font-medium tracking-[0.1em] text-slate-400">{item.helper}</span>
-                            </span>
-                            <span className="text-xs text-slate-500">●</span>
-                          </Link>
-                        );
-                      })}
-                    </div>
-                  ) : null}
                 </>
               ) : null}
             </nav>
@@ -146,6 +129,33 @@ export function AppShell({ children, active = "Visão geral", title = "Portal Eu
             </div>
           </div>
         </aside>
+
+        {configOpen && visibleConfigItems.length > 0 ? (
+          <aside className="config-flyout hidden xl:block">
+            <div className="config-flyout-inner">
+              <p className="px-2 text-[0.64rem] font-semibold uppercase tracking-[0.2em] text-slate-400">Configuração</p>
+              <div className="mt-2 grid gap-1.5">
+                {visibleConfigItems.map((item) => {
+                  const selected = isItemActive(item);
+                  return (
+                    <Link
+                      key={item.label}
+                      href={item.href}
+                      className={`nav-link ${selected ? "nav-link-active" : ""}`}
+                      onClick={() => setConfigOpen(false)}
+                    >
+                      <span>
+                        <span className="block">{item.label}</span>
+                        <span className="mt-0.5 block text-[0.66rem] font-medium tracking-[0.1em] text-slate-400">{item.helper}</span>
+                      </span>
+                      <span className="text-xs text-slate-500">●</span>
+                    </Link>
+                  );
+                })}
+              </div>
+            </div>
+          </aside>
+        ) : null}
 
         <section className="min-w-0 flex-1">
           <header className="shell-topbar px-6 py-5 lg:px-10 2xl:px-16">
