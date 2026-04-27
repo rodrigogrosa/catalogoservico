@@ -27,13 +27,33 @@ export function ProjectPageSectionClient({
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    void fetchProject(id)
-      .then((result) => {
+    let cancelled = false;
+    async function loadWithRetry() {
+      try {
+        const result = await fetchProject(id);
+        if (cancelled) return;
         setProject(result);
         setError(null);
-      })
-      .catch((loadError) => setError(loadError instanceof Error ? loadError.message : "Falha ao carregar projeto."))
-      .finally(() => setLoading(false));
+      } catch (firstError) {
+        if (cancelled) return;
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+        try {
+          const retry = await fetchProject(id);
+          if (cancelled) return;
+          setProject(retry);
+          setError(null);
+        } catch (finalError) {
+          if (cancelled) return;
+          setError(finalError instanceof Error ? finalError.message : "Falha ao carregar projeto.");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    void loadWithRetry();
+    return () => {
+      cancelled = true;
+    };
   }, [id]);
 
   if (loading) {

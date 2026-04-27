@@ -454,7 +454,9 @@ class ProjectService:
         manifest = self.storage.load_manifest(project_id)
         if manifest is None:
             return None
-        self.ensure_preview_fields(manifest, persist=True, extract_missing=True, generate_marketplace=False)
+        # Endpoint de leitura deve ser rápido e não bloquear UI com extrações pesadas.
+        # A regeneração de previews fica no fluxo dedicado de processamento/refresh.
+        self.ensure_preview_fields(manifest, persist=True, extract_missing=False, generate_marketplace=False)
         self.ensure_sales_profile(manifest, persist=True, allow_llm=False)
         manifest_path = Path(manifest["storage_path"]) / "project_manifest.json"
         if manifest_path.exists():

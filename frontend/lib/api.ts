@@ -648,14 +648,14 @@ export function fileUrl(url?: string | null): string | undefined {
 }
 
 export async function fetchProjects(): Promise<ProjectSummary[]> {
-  const response = await apiFetchResilient("/projects", { cache: "no-store", headers: authHeaders() });
+  const response = await apiFetchResilient("/projects", { cache: "no-store", headers: authHeaders() }, 60000);
   if (!response.ok) throw await parseApiError(response, "Falha ao carregar projetos");
   const data = await response.json();
   return data.items;
 }
 
 export async function fetchProject(id: string): Promise<ProjectDetail> {
-  const response = await apiFetchResilient(`/projects/${id}`, { cache: "no-store", headers: authHeaders() });
+  const response = await apiFetchResilient(`/projects/${id}`, { cache: "no-store", headers: authHeaders() }, 90000);
   if (!response.ok) throw await parseApiError(response, "Falha ao carregar projeto");
   return response.json();
 }
