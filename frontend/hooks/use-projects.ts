@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { fetchProjects, type ProjectListParams, type ProjectListResponse, type ProjectSummary } from "@/lib/api";
+import { cacheProjectSummaries } from "@/lib/project-cache";
 
 type UseProjectsOptions = ProjectListParams;
 
@@ -25,6 +26,9 @@ export function useProjects(options?: UseProjectsOptions) {
       setLoading(true);
       const data = await fetchProjects({ page, per_page, status, search });
       setResponse(data);
+      // Warm the project-detail cache so navigating to a project detail
+      // page renders instantly without a loading spinner.
+      cacheProjectSummaries(data.items);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Falha ao carregar projetos.");
     } finally {

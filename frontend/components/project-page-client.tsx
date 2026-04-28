@@ -1,13 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { AppShell } from "@/components/app-shell";
 import { useAuth } from "@/components/auth-provider";
 import { AccessDeniedPanel } from "@/components/permission-gate";
 import { ProjectDetailView } from "@/components/project-detail";
 import { fetchProject, type ProjectDetail } from "@/lib/api";
+import { getCachedProjectSummary, summaryToPartialDetail } from "@/lib/project-cache";
 import { PERMISSIONS } from "@/lib/permissions";
 
 export function ProjectPageClient({ id }: { id: string }) {
@@ -22,13 +23,27 @@ export function ProjectPageSectionClient({
   section: "overview" | "process" | "diagnostics" | "files" | "images";
 }) {
   const { can } = useAuth();
-  const [project, setProject] = useState<ProjectDetail | null>(null);
+
+  // Seed the initial state from the catalog in-memory cache (if available).
+  // This makes the page render instantly on navigation from the catalog —
+  // no spinner, no blank screen.  The full detail replaces it silently.
+  const [project, setProject] = useState<ProjectDetail | null>(() => {
+    const cached = getCachedProjectSummary(id);
+    return cached ? summaryToPartialDetail(cached) : null;
+  });
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  // loading=true only when we have NO data at all (cold load, direct URL hit)
+  const [loading, setLoading] = useState(project === null);
+  // refreshing=true when we already have partial data and are fetching full detail
+  const [refreshing, setRefreshing] = useState(project !== null);
+  const fetchedRef = useRef(false);
 
   useEffect(() => {
+    if (fetchedRef.current) return;
+    fetchedRef.current = true;
+
     let cancelled = false;
-    async function loadWithRetry() {
+    async function loadFull() {
       try {
         const result = await fetchProject(id);
         if (cancelled) return;
@@ -36,25 +51,35 @@ export function ProjectPageSectionClient({
         setError(null);
       } catch (firstError) {
         if (cancelled) return;
-        await new Promise((resolve) => setTimeout(resolve, 1200));
-        try {
-          const retry = await fetchProject(id);
-          if (cancelled) return;
-          setProject(retry);
-          setError(null);
-        } catch (finalError) {
-          if (cancelled) return;
-          setError(finalError instanceof Error ? finalError.message : "Falha ao carregar projeto.");
+        // Only retry if we have no partial data (slow network / cold start)
+        if (project === null) {
+          await new Promise((resolve) => setTimeout(resolve, 1200));
+          try {
+            const retry = await fetchProject(id);
+            if (cancelled) return;
+            setProject(retry);
+            setError(null);
+          } catch (finalError) {
+            if (cancelled) return;
+            setError(finalError instanceof Error ? finalError.message : "Falha ao carregar projeto.");
+          }
+        } else {
+          // We already have partial data — silently swallow the error;
+          // the user sees the cached summary and can refresh manually.
+          console.warn("[SnapMaker3d] Full detail fetch failed, using cached summary", firstError);
         }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+          setRefreshing(false);
+        }
       }
     }
-    void loadWithRetry();
+    void loadFull();
     return () => {
       cancelled = true;
     };
-  }, [id]);
+  }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loading) {
     return (
@@ -114,6 +139,10 @@ export function ProjectPageSectionClient({
 
   return (
     <AppShell active="Catálogo" title={sectionMeta[section].title} subtitle={sectionMeta[section].subtitle}>
+      {/* Subtle top-bar indicator while fetching the full detail in background */}
+      {refreshing && (
+        <div className="fixed left-0 top-0 z-50 h-0.5 w-full animate-pulse bg-orange-400" aria-hidden />
+      )}
       <div className="mx-auto max-w-5xl space-y-6">
         <Link href="/catalog" className="text-sm text-accentSoft underline">
           Voltar para o catálogo

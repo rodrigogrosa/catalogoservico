@@ -307,6 +307,7 @@ class ProjectService:
                 project_manifest = _service_ref.manifest_service.build_manifest(fresh, _saved_files, [])
                 _service_ref.manifest_service.write_manifest(_layout_root, project_manifest)
                 fresh["manifest"] = project_manifest
+                fresh["has_project_manifest"] = True
                 _service_ref.storage.save_manifest(fresh)
                 logger.info("project_formal_manifest_written", extra={"project_id": _project_id})
             except Exception as exc:  # noqa: BLE001
@@ -527,29 +528,25 @@ class ProjectService:
         manifest = self.storage.load_manifest(project_id)
         if manifest is None:
             return None
-        self.recover_stale_processing(manifest, persist=True)
-        # GET is a pure read path.  Do NOT run any enrichment (preview scan,
-        # sales profile generation, marketplace asset generation) here.
-        # All enrichment happens during upload (background worker) and
-        # process_project.  Running it on every GET blocks the request thread
-        # and triggers repeated NFS directory scans.
+        # GET is a pure read — do NOT write to disk.  persist=False ensures
+        # stale-recovery only mutates the in-memory dict; the write is deferred
+        # to the next POST/process call that actually changes state.
+        self.recover_stale_processing(manifest, persist=False)
 
-        # For project_manifest.json: the frontend only checks if the field is
-        # non-null to display a download link. Avoid reading the full JSON on
-        # every GET by constructing a lightweight stub when the file exists.
-        if manifest.get("manifest") is None:
-            manifest_path = Path(manifest["storage_path"]) / "project_manifest.json"
-            if manifest_path.is_file():
-                manifest["manifest"] = {
-                    "project_id": manifest.get("id", ""),
-                    "project_name": manifest.get("name", ""),
-                    "slug": manifest.get("slug", ""),
-                    "version": manifest.get("version", 1),
-                    "created_at": manifest.get("created_at"),
-                    "updated_at": manifest.get("updated_at"),
-                    "source_ecosystem": manifest.get("source_ecosystem", "generic"),
-                    "pipeline_version": "stored",
-                }
+        # project_manifest.json availability: read from the stored flag instead
+        # of calling is_file() on NFS on every request.  The flag is set to True
+        # by the background worker (upload) and the process pipeline.
+        if manifest.get("manifest") is None and manifest.get("has_project_manifest"):
+            manifest["manifest"] = {
+                "project_id": manifest.get("id", ""),
+                "project_name": manifest.get("name", ""),
+                "slug": manifest.get("slug", ""),
+                "version": manifest.get("version", 1),
+                "created_at": manifest.get("created_at"),
+                "updated_at": manifest.get("updated_at"),
+                "source_ecosystem": manifest.get("source_ecosystem", "generic"),
+                "pipeline_version": "stored",
+            }
         return ProjectDetailResponse(**manifest)
 
     def delete_project(self, project_id: str) -> bool:
@@ -833,6 +830,7 @@ class ProjectService:
             formal_manifest = self.manifest_service.build_manifest(manifest, original_files, generated_artifacts, snapshot=snapshot)
             self.manifest_service.write_manifest(project_root, formal_manifest)
             manifest["manifest"] = formal_manifest
+            manifest["has_project_manifest"] = True
             self.storage.save_manifest(manifest)
             self.append_log(folders["logs"], f"Processamento concluído com status {manifest['status']}.", stage_key="project", status=manifest["status"])
             logger.info("Projeto %s processado com status %s", project_id, manifest["status"])
