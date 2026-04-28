@@ -16,12 +16,26 @@ IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 
 class PreviewService:
     PREVIEWABLE_EXTENSIONS = {"stl", "obj"}
+    # Hints matched against filename (e.g. plate_1.png, thumbnail_middle.png)
     ARCHIVE_IMAGE_HINTS = ("plate", "top", "pick", "preview", "thumbnail")
-    MAIN_PREVIEW_PRIORITIES = ("thumbnail", "preview", "plate_1", "plate", "top_1", "top", "pick")
-    LOW_VALUE_HINTS = ("small", "thumbnail_small", "thumbnail_middle", "plate_no_light")
+    # Bambu/Orca 3MF directories that contain the real product photos.
+    # These are matched against the FULL internal path so we can capture
+    # files like 'Auxiliaries/Model Pictures/peach.webp' even when the
+    # filename itself has no hint keyword.
+    ARCHIVE_PRODUCT_PHOTO_DIRS = ("model pictures", "profile pictures")
+    # These are the best lifestyle/product thumbnails Bambu embeds:
+    ARCHIVE_THUMBNAIL_KEEP = ("thumbnail_middle",)
+    MAIN_PREVIEW_PRIORITIES = (
+        "model_picture",   # Auxiliaries/Model Pictures — designer's own photo
+        "thumbnail_middle",# Bambu lifestyle render with background
+        "thumbnail", "preview", "plate_1", "plate", "top_1", "top", "pick",
+    )
+    # thumbnail_middle removed — it is actually the best Bambu preview image.
+    LOW_VALUE_HINTS = ("small", "thumbnail_small", "plate_no_light")
     MARKETPLACE_IMAGE_SIZE = 1600
     MARKETPLACE_LABEL_PREFIX = "marketplace_"
-    MARKETPLACE_REJECT_HINTS = ("small", "thumbnail_3mf")
+    # thumbnail_middle intentionally NOT here — it's a high-quality lifestyle photo.
+    MARKETPLACE_REJECT_HINTS = ("small", "thumbnail_3mf", "thumbnail_small", "plate_no_light")
     MARKETPLACE_FAMILY_PRIORITIES = ("plate", "pick", "top", "thumbnail", "preview", "generic")
     MAX_ARCHIVE_PREVIEW_CANDIDATES = 24
     DEFAULT_MAX_PROJECT_PREVIEWS = 5
@@ -59,15 +73,38 @@ class PreviewService:
 
         try:
             with zipfile.ZipFile(file_path) as archive:
-                candidates = [
-                    name
-                    for name in archive.namelist()
-                    if Path(name).suffix.lower() in IMAGE_EXTENSIONS
-                    and any(hint in Path(name).name.lower() for hint in self.ARCHIVE_IMAGE_HINTS)
-                ]
+                all_names = archive.namelist()
+                candidates: list[str] = []
+                for name in all_names:
+                    p = Path(name)
+                    if p.suffix.lower() not in IMAGE_EXTENSIONS:
+                        continue
+                    fname_lower = p.name.lower()
+                    path_lower = name.lower()
+                    # Always include images from Bambu's product-photo directories
+                    # (e.g. Auxiliaries/Model Pictures/, Auxiliaries/Profile Pictures/).
+                    # These are the designer's own renders/photos — highest quality.
+                    in_product_dir = any(d in path_lower for d in self.ARCHIVE_PRODUCT_PHOTO_DIRS)
+                    # Include known high-value thumbnails by filename
+                    is_keep_thumbnail = any(t in fname_lower for t in self.ARCHIVE_THUMBNAIL_KEEP)
+                    # Include standard slicer metadata images by filename hint
+                    has_hint = any(hint in fname_lower for hint in self.ARCHIVE_IMAGE_HINTS)
+                    if not (in_product_dir or is_keep_thumbnail or has_hint):
+                        continue
+                    candidates.append(name)
+
                 candidates = sorted(candidates, key=self.archive_candidate_sort_key)[: self.MAX_ARCHIVE_PREVIEW_CANDIDATES]
                 for name in candidates:
-                    target = previews_dir / f"{label_prefix}_{Path(name).name}"
+                    p = Path(name)
+                    path_lower = name.lower()
+                    # Use a distinctive prefix for product-photo-directory images so scoring
+                    # can give them the highest priority.
+                    in_product_dir = any(d in path_lower for d in self.ARCHIVE_PRODUCT_PHOTO_DIRS)
+                    if in_product_dir:
+                        saved_name = f"{label_prefix}_model_picture_{p.name}"
+                    else:
+                        saved_name = f"{label_prefix}_{p.name}"
+                    target = previews_dir / saved_name
                     target = self._unique_path(target)
                     target.write_bytes(archive.read(name))
                     assets.append(self._artifact(target, storage_root))
@@ -264,7 +301,13 @@ class PreviewService:
         }
 
     def archive_candidate_sort_key(self, entry_name: str) -> tuple[int, int, str]:
+        # entry_name may be a full path inside the archive (e.g. "Auxiliaries/Model Pictures/peach.webp")
+        # or just a filename.  Check the full path for product-photo directories.
+        path_lower = entry_name.lower()
         label = Path(entry_name).name.lower()
+        # Product-photo dirs get priority -1 (before everything else)
+        if any(d in path_lower for d in self.ARCHIVE_PRODUCT_PHOTO_DIRS):
+            return (-1, 0, label)
         priority = next((index for index, marker in enumerate(self.MAIN_PREVIEW_PRIORITIES) if marker in label), len(self.MAIN_PREVIEW_PRIORITIES))
         penalty = 0
         if any(hint in label for hint in self.LOW_VALUE_HINTS):
@@ -299,6 +342,11 @@ class PreviewService:
         score = 0.0
         if "marketplace_" in label or kind == "marketplace_preview":
             score += 180
+        # Bambu/Orca designer photos — the real product renders, best for marketplace
+        if "model_picture" in label:
+            score += 160
+        if "thumbnail_middle" in label:
+            score += 120  # lifestyle render with background, much better than plate renders
         if "hero" in label:
             score += 30
         if "dimensions" in label:
