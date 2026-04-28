@@ -179,14 +179,23 @@ class StorageService:
 
     def load_manifest(self, project_id: str) -> dict[str, Any] | None:
         project_id = self._safe_project_id(project_id)
-        # Fast path: DB tells us exactly where the directory is.
+        # Fast path 1: DB tells us exactly where the directory is.
         storage_path = self.db.find_storage_path(project_id)
         if storage_path:
             project_dir = Path(storage_path)
             manifest_file = project_dir / "project.json"
             if manifest_file.exists():
                 return self.normalize_manifest_paths(self.read_json(manifest_file), project_dir)
-        # Slow path: filesystem glob (used when DB is unavailable or not yet synced).
+        # Fast path 2: project_id is always "{slug}_v{NNN}" – derive slug and
+        # construct the exact path directly, avoiding any NFS glob scan.
+        slug_match = re.match(r"^(.+)_v(\d+)$", project_id)
+        if slug_match:
+            slug = slug_match.group(1)
+            project_dir = self.root / slug / project_id
+            manifest_file = project_dir / "project.json"
+            if manifest_file.exists():
+                return self.normalize_manifest_paths(self.read_json(manifest_file), project_dir)
+        # Fallback: glob for legacy IDs that don't follow the naming convention.
         for project_dir in self.root.glob(f"*/{project_id}"):
             manifest = project_dir / "project.json"
             if manifest.exists():
@@ -195,7 +204,16 @@ class StorageService:
 
     def delete_project(self, project_id: str) -> bool:
         project_id = self._safe_project_id(project_id)
-        for project_dir in self.root.glob(f"*/{project_id}"):
+        # Derive the slug directly from the project_id naming convention.
+        slug_match = re.match(r"^(.+)_v(\d+)$", project_id)
+        candidates: list[Path] = []
+        if slug_match:
+            direct = self.root / slug_match.group(1) / project_id
+            if direct.is_dir():
+                candidates = [direct]
+        if not candidates:
+            candidates = list(self.root.glob(f"*/{project_id}"))
+        for project_dir in candidates:
             if not project_dir.is_dir():
                 continue
             project_dir.relative_to(self.root)
