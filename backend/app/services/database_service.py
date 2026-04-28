@@ -102,14 +102,21 @@ def _t(sql: str) -> Any:
 
 
 class DatabaseService:
-    """Thread-safe project index.  Falls back gracefully if unavailable."""
+    """Thread-safe project index.  Falls back gracefully if unavailable.
+
+    The DB is ONLY activated when ``DATABASE_URL`` is explicitly set in the
+    environment.  Without it the service is a no-op so the application falls
+    back to pure filesystem – this avoids creating SQLite on NFS (Northflank
+    volume) which causes file-locking hangs that freeze the entire process.
+    """
 
     def __init__(self, storage_root: Path) -> None:
         self.storage_root = storage_root
         self._engine: Any = None
-        # Instance-level lock so that multiple service instances (tests, etc.)
-        # do not contend on a shared global lock.
         self._lock = threading.Lock()
+        # Only activate if DATABASE_URL is explicitly provided.
+        # Never create SQLite on NFS – file locking is broken there.
+        self._enabled: bool = bool(os.environ.get("DATABASE_URL", "").strip())
 
     # ------------------------------------------------------------------
     # Internal
@@ -117,14 +124,11 @@ class DatabaseService:
 
     def _resolve_url(self) -> str:
         raw = os.environ.get("DATABASE_URL", "").strip()
-        if raw:
-            return _normalise_db_url(raw)
-        # Local SQLite next to the storage root
-        db_path = self.storage_root / "_system" / "app.db"
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        return f"sqlite:///{db_path}"
+        return _normalise_db_url(raw)
 
     def _get_engine(self) -> Any:
+        if not self._enabled:
+            return None
         if self._engine is not None:
             return self._engine
         with self._lock:
@@ -147,7 +151,7 @@ class DatabaseService:
 
     @property
     def available(self) -> bool:
-        return self._get_engine() is not None
+        return self._enabled and self._get_engine() is not None
 
     def has_any_projects(self) -> bool:
         """Return True if the ``projects`` table contains at least one row."""
@@ -162,33 +166,48 @@ class DatabaseService:
             return False
 
     # ------------------------------------------------------------------
-    # Write operations
+    # Write operations (fire-and-forget – never block the request thread)
     # ------------------------------------------------------------------
 
+    def _run_bg(self, fn: Any, *args: Any) -> None:
+        """Execute *fn* in a daemon thread so it never blocks the caller."""
+        def _task() -> None:
+            try:
+                fn(*args)
+            except Exception:
+                logger.exception("db_background_write_failed")
+        threading.Thread(target=_task, daemon=True).start()
+
     def upsert_project(self, manifest: dict[str, Any]) -> None:
-        engine = self._get_engine()
-        if engine is None:
+        if not self._enabled:
             return
+        # Snapshot the fields we need now (manifest dict may be mutated later)
         project_id = manifest.get("id")
         if not project_id:
             return
         ps = manifest.get("printable_score")
+        row: dict[str, Any] = {
+            "id": project_id,
+            "slug": manifest.get("slug") or "",
+            "name": manifest.get("name"),
+            "version": int(manifest.get("version") or 1),
+            "status": manifest.get("status") or "pending",
+            "input_format": manifest.get("input_format"),
+            "source_ecosystem": manifest.get("source_ecosystem"),
+            "storage_path": str(manifest.get("storage_path") or ""),
+            "preview_url": manifest.get("preview_url"),
+            "printable_score": json.dumps(ps) if isinstance(ps, dict) else None,
+            "created_at": str(manifest.get("created_at") or ""),
+            "updated_at": str(manifest.get("updated_at") or ""),
+        }
+        self._run_bg(self._upsert_row, row)
+
+    def _upsert_row(self, row: dict[str, Any]) -> None:
+        engine = self._get_engine()
+        if engine is None:
+            return
+        url_str = str(engine.url)
         try:
-            row: dict[str, Any] = {
-                "id": project_id,
-                "slug": manifest.get("slug") or "",
-                "name": manifest.get("name"),
-                "version": int(manifest.get("version") or 1),
-                "status": manifest.get("status") or "pending",
-                "input_format": manifest.get("input_format"),
-                "source_ecosystem": manifest.get("source_ecosystem"),
-                "storage_path": str(manifest.get("storage_path") or ""),
-                "preview_url": manifest.get("preview_url"),
-                "printable_score": json.dumps(ps) if isinstance(ps, dict) else None,
-                "created_at": str(manifest.get("created_at") or ""),
-                "updated_at": str(manifest.get("updated_at") or ""),
-            }
-            url_str = str(engine.url)
             with engine.begin() as conn:
                 if "postgresql" in url_str:
                     conn.execute(
@@ -229,9 +248,14 @@ class DatabaseService:
                         row,
                     )
         except Exception:
-            logger.exception("db_upsert_failed", extra={"project_id": project_id})
+            logger.exception("db_upsert_failed", extra={"project_id": row.get("id")})
 
     def delete_project(self, project_id: str) -> None:
+        if not self._enabled:
+            return
+        self._run_bg(self._delete_row, project_id)
+
+    def _delete_row(self, project_id: str) -> None:
         engine = self._get_engine()
         if engine is None:
             return
