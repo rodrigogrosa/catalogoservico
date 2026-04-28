@@ -652,11 +652,36 @@ export function fileUrl(url?: string | null): string | undefined {
   return `${backendOrigin()}${url}`;
 }
 
-export async function fetchProjects(): Promise<ProjectSummary[]> {
-  const response = await apiFetchResilient("/projects", { cache: "no-store", headers: authHeaders() }, 60000);
+export type ProjectListResponse = {
+  items: ProjectSummary[];
+  total: number;
+  page: number;
+  per_page: number;
+  pages: number;
+};
+
+export type ProjectListParams = {
+  page?: number;
+  per_page?: number;
+  status?: string;
+  search?: string;
+  /** When true, route through the Next.js BFF (/api/catalog) instead of the backend directly. */
+  bff?: boolean;
+};
+
+export async function fetchProjects(params?: ProjectListParams): Promise<ProjectListResponse> {
+  const { page = 1, per_page = 20, status, search, bff = false } = params ?? {};
+  const qp = new URLSearchParams({ page: String(page), per_page: String(per_page) });
+  if (status) qp.set("status", status);
+  if (search) qp.set("search", search);
+
+  const url = bff
+    ? `/api/catalog?${qp.toString()}`
+    : `/projects?${qp.toString()}`;
+
+  const response = await apiFetchResilient(url, { cache: "no-store", headers: authHeaders() }, 60000);
   if (!response.ok) throw await parseApiError(response, "Falha ao carregar projetos");
-  const data = await response.json();
-  return data.items;
+  return response.json();
 }
 
 export async function fetchProject(id: string): Promise<ProjectDetail> {

@@ -17,7 +17,25 @@ from app.core.config import get_settings
 from app.services.database_service import DatabaseService
 
 
+import threading
+
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Module-level TTL cache for list_manifests (shared across all StorageService
+# instances in the same process).  Invalidated on every save/delete.
+# ---------------------------------------------------------------------------
+_manifest_cache: list[dict[str, Any]] | None = None
+_manifest_cache_at: float = 0.0
+_manifest_cache_ttl: float = 30.0  # seconds
+_manifest_cache_lock = threading.Lock()
+
+
+def _invalidate_manifest_cache() -> None:
+    global _manifest_cache, _manifest_cache_at
+    with _manifest_cache_lock:
+        _manifest_cache = None
+        _manifest_cache_at = 0.0
 
 
 class StorageService:
@@ -166,6 +184,7 @@ class StorageService:
         self.write_json(self.manifest_path(project_root), manifest)
         self.write_json(self.summary_path(project_root), self.build_project_summary(manifest))
         self.db.upsert_project(manifest)
+        _invalidate_manifest_cache()
 
     def save_project_manifest(self, project_root: Path, payload: dict[str, Any]) -> None:
         self.write_json(project_root / "project_manifest.json", payload)
@@ -222,13 +241,21 @@ class StorageService:
             if parent_dir != self.root and parent_dir.exists() and not any(parent_dir.iterdir()):
                 parent_dir.rmdir()
             self.db.delete_project(project_id)
+            _invalidate_manifest_cache()
             return True
         return False
 
     def list_manifests(self) -> list[dict[str, Any]]:
-        # Fast path: use the DB index (returns only the latest version per slug).
+        global _manifest_cache, _manifest_cache_at
+
+        # Fast path 1: use the DB index (returns only the latest version per slug).
         if self.db.available and self.db.has_any_projects():
             return self.db.list_latest_projects()
+
+        # Fast path 2: in-memory TTL cache (avoids repeated NFS glob scans).
+        with _manifest_cache_lock:
+            if _manifest_cache is not None and (time.monotonic() - _manifest_cache_at) < _manifest_cache_ttl:
+                return list(_manifest_cache)
 
         # Slow path: scan the filesystem and populate the DB for future calls.
         manifests: list[dict[str, Any]] = []
@@ -270,7 +297,14 @@ class StorageService:
             existing = by_slug.get(slug)
             if existing is None or int(item.get("version") or 0) > int(existing.get("version") or 0):
                 by_slug[slug] = item
-        return sorted(by_slug.values(), key=lambda x: str(x.get("updated_at", "")), reverse=True)
+        result = sorted(by_slug.values(), key=lambda x: str(x.get("updated_at", "")), reverse=True)
+
+        # Populate TTL cache so the next call within the window is O(1).
+        with _manifest_cache_lock:
+            _manifest_cache = result
+            _manifest_cache_at = time.monotonic()
+
+        return result
 
     def build_project_summary(self, manifest: dict[str, Any]) -> dict[str, Any]:
         printable_score = manifest.get("printable_score")

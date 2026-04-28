@@ -134,7 +134,7 @@ export function ProjectDetailView({ project, section }: Props) {
   }, [project]);
 
   useEffect(() => {
-    void fetchProjects().then(setAllProjects).catch(() => undefined);
+    void fetchProjects().then((r) => setAllProjects(r.items)).catch(() => undefined);
     void fetchProjectVersions(project.id).then(setVersions).catch(() => undefined);
   }, [project.id]);
 

@@ -1,30 +1,49 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
-import { fetchProjects, type ProjectSummary } from "@/lib/api";
+import { fetchProjects, type ProjectListParams, type ProjectListResponse, type ProjectSummary } from "@/lib/api";
 
-export function useProjects() {
-  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+type UseProjectsOptions = ProjectListParams;
+
+export function useProjects(options?: UseProjectsOptions) {
+  const { page = 1, per_page = 20, status, search } = options ?? {};
+
+  const [response, setResponse] = useState<ProjectListResponse>({
+    items: [],
+    total: 0,
+    page: 1,
+    per_page,
+    pages: 1,
+  });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  async function refreshProjects() {
+  const refreshProjects = useCallback(async () => {
     try {
       setError(null);
       setLoading(true);
-      const items = await fetchProjects();
-      setProjects(items);
+      const data = await fetchProjects({ page, per_page, status, search });
+      setResponse(data);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Falha ao carregar projetos.");
     } finally {
       setLoading(false);
     }
-  }
+  }, [page, per_page, status, search]);
 
   useEffect(() => {
     void refreshProjects();
-  }, []);
+  }, [refreshProjects]);
 
-  return { error, loading, projects, refreshProjects };
+  return {
+    error,
+    loading,
+    // Backward-compat: expose flat `projects` array so existing consumers don't break.
+    projects: response.items,
+    total: response.total,
+    pages: response.pages,
+    currentPage: response.page,
+    refreshProjects,
+  };
 }

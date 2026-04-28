@@ -204,7 +204,8 @@ def test_list_projects_skips_broken_manifests(tmp_path: Path, monkeypatch) -> No
     storage.save_manifest(valid_manifest)
     (broken_layout["folders"]["root"] / "project.json").write_text("{not-json", encoding="utf-8")
 
-    projects = service.list_projects()
+    result = service.list_projects()
+    projects = result["items"]
 
     assert [project.id for project in projects] == [valid_layout["version_name"]]
 

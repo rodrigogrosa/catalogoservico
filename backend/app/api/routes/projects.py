@@ -1,7 +1,7 @@
 import asyncio
 import logging
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
 
 from app.core.auth import require_permission
 from app.schemas.auth import AuthUser
@@ -25,11 +25,16 @@ logger = logging.getLogger(__name__)
 
 @router.get("", response_model=ProjectListResponse)
 async def list_projects(
+    page: int = Query(default=1, ge=1, description="Página (1-based)"),
+    per_page: int = Query(default=20, ge=1, le=200, description="Itens por página"),
+    status: str | None = Query(default=None, description="Filtrar por status"),
+    search: str | None = Query(default=None, description="Buscar por nome"),
     service: ProjectService = Depends(get_project_service),
     current_user: AuthUser = Depends(require_permission("projects.view")),
 ) -> ProjectListResponse:
-    logger.info("projects_list_requested", extra={"username": current_user.username})
-    return ProjectListResponse(items=service.list_projects())
+    logger.info("projects_list_requested", extra={"username": current_user.username, "page": page, "per_page": per_page})
+    result = service.list_projects(page=page, per_page=per_page, status_filter=status, search=search)
+    return ProjectListResponse(**result)
 
 
 @router.get("/{project_id}", response_model=ProjectDetailResponse)

@@ -12,11 +12,33 @@ import { useProjects } from "@/hooks/use-projects";
 import { PERMISSIONS } from "@/lib/permissions";
 import { buildProjectMetrics } from "@/lib/project-metrics";
 
+const PER_PAGE = 20;
+
 export default function CatalogPage() {
   const { can } = useAuth();
-  const { error, loading, projects, refreshProjects } = useProjects();
   const [activeTab, setActiveTab] = useState<"projects" | "sales">("projects");
+  const [page, setPage] = useState(1);
+  const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+
+  const { error, loading, projects, total, pages, refreshProjects } = useProjects({
+    page,
+    per_page: PER_PAGE,
+    search: debouncedSearch || undefined,
+  });
+
   const metrics = buildProjectMetrics(projects);
+
+  function handleSearchChange(e: React.ChangeEvent<HTMLInputElement>) {
+    setSearch(e.target.value);
+    // Simple debounce: reset to page 1 and update after a short delay.
+    const value = e.target.value;
+    clearTimeout((handleSearchChange as { _timer?: ReturnType<typeof setTimeout> })._timer);
+    (handleSearchChange as { _timer?: ReturnType<typeof setTimeout> })._timer = setTimeout(() => {
+      setDebouncedSearch(value);
+      setPage(1);
+    }, 300);
+  }
 
   return (
     <AppShell
@@ -33,7 +55,7 @@ export default function CatalogPage() {
         <section className="py-10">
           <div className="portal-card rounded-[1.8rem] px-6 py-6">
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-              <ProjectStatCard label="Total do acervo" value={`${metrics.total}`} />
+              <ProjectStatCard label="Total do acervo" value={`${total}`} />
               <ProjectStatCard label="Prontos para uso" value={`${metrics.completed}`} tone="success" />
               <ProjectStatCard label="Em processamento" value={`${metrics.processing}`} />
               <ProjectStatCard label="Pontos de atenção" value={`${metrics.needsAttention}`} tone="warning" />
@@ -66,6 +88,17 @@ export default function CatalogPage() {
               </button>
             </div>
           </div>
+
+          {/* Search bar */}
+          <div className="mt-4">
+            <input
+              type="search"
+              value={search}
+              onChange={handleSearchChange}
+              placeholder="Buscar projeto por nome…"
+              className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-800 placeholder-slate-400 outline-none focus:ring-2 focus:ring-slate-900/20"
+            />
+          </div>
         </section>
 
         {loading ? (
@@ -74,6 +107,31 @@ export default function CatalogPage() {
           <SalesCatalogPanel items={projects} />
         ) : (
           <ProjectList items={projects} onProjectDeleted={refreshProjects} />
+        )}
+
+        {/* Pagination controls */}
+        {!loading && pages > 1 && (
+          <div className="flex items-center justify-center gap-3 pt-2">
+            <button
+              type="button"
+              disabled={page <= 1}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 disabled:opacity-40"
+            >
+              ← Anterior
+            </button>
+            <span className="text-sm text-slate-600">
+              Página {page} de {pages} · {total} projetos
+            </span>
+            <button
+              type="button"
+              disabled={page >= pages}
+              onClick={() => setPage((p) => Math.min(pages, p + 1))}
+              className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 disabled:opacity-40"
+            >
+              Próxima →
+            </button>
+          </div>
         )}
       </div>
       )}

@@ -25,6 +25,7 @@ from app.schemas.project import (
 from app.services.agents.orchestrator import OrchestratorAgent
 from app.services.agents.qa_agent import QATechnicalAgent
 from app.services.audit_service import AuditService
+from app.services.background_worker import enqueue
 from app.services.bundle_service import BundleService
 from app.services.checksum_service import ChecksumService
 from app.services.format_service import FormatService
@@ -281,7 +282,10 @@ class ProjectService:
                 blocking_questions=[question for question in self.normalize_questions(upload_intake.get("questions", [])) if question["kind"] == "blocking"],
             ),
         }
-        manifest["sales_profile"] = self.sales_service.build_sales_profile(manifest, allow_llm=False)
+        # Defer sales_profile generation to the background queue so the upload
+        # request returns immediately.  The post-import AI enrichment job will
+        # also upgrade it to allow_llm=True once previews are ready.
+        manifest["sales_profile"] = None
         self.storage.save_manifest(manifest)
         self.append_log(layout["folders"]["logs"], "Projeto criado e análise inicial concluída.")
         project_manifest = self.manifest_service.build_manifest(manifest, saved_files, [])
@@ -452,7 +456,14 @@ class ProjectService:
             "questions": questions,
         }
 
-    def list_projects(self) -> list[ProjectSummary]:
+    def list_projects(
+        self,
+        *,
+        page: int = 1,
+        per_page: int = 20,
+        status_filter: str | None = None,
+        search: str | None = None,
+    ) -> dict[str, Any]:
         manifest_summaries = self.storage.list_manifests()
         summaries: list[ProjectSummary] = []
         for manifest in manifest_summaries:
@@ -468,7 +479,29 @@ class ProjectService:
                     },
                 )
                 continue
-        return summaries
+
+        # Filter server-side so we never ship the full list over the wire.
+        if status_filter:
+            summaries = [s for s in summaries if s.status == status_filter]
+        if search:
+            q = search.lower()
+            summaries = [s for s in summaries if q in (s.name or "").lower()]
+
+        total = len(summaries)
+        per_page = max(1, min(per_page, 200))
+        page = max(1, page)
+        pages = max(1, (total + per_page - 1) // per_page)
+        offset = (page - 1) * per_page
+        page_items = summaries[offset : offset + per_page]
+
+        return {
+            "items": page_items,
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "pages": pages,
+        }
+
 
     def get_project(self, project_id: str) -> ProjectDetailResponse | None:
         manifest = self.storage.load_manifest(project_id)
@@ -1389,8 +1422,11 @@ class ProjectService:
             except Exception as exc:  # noqa: BLE001
                 logger.warning("post_import_ai_enrichment_failed", extra={"project_id": project_id, "error": str(exc)})
 
-        worker = threading.Thread(target=run, daemon=True, name=f"post-import-ai-{project_id}")
-        worker.start()
+        worker = enqueue(
+            f"post-import-ai-{project_id}",
+            run,
+            max_retries=1,
+        )
 
     def collect_generated_artifacts(self, outputs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         generated: list[dict[str, Any]] = []

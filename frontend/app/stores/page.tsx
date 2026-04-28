@@ -69,7 +69,8 @@ export default function StoresPage() {
     setError(null);
     setLoading(true);
     try {
-      const [connectorItems, storeItems, projectItems] = await Promise.all([fetchStoreConnectors(), fetchStores(), fetchProjects()]);
+      const [connectorItems, storeItems, projectListResp] = await Promise.all([fetchStoreConnectors(), fetchStores(), fetchProjects()]);
+      const projectItems = projectListResp.items;
       setConnectors(connectorItems);
       setStores(storeItems);
       setProjects(projectItems.filter((project) => project.sales_profile));

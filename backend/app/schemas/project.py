@@ -192,6 +192,10 @@ class ProjectDetailResponse(ProjectSummary):
 
 class ProjectListResponse(BaseModel):
     items: list[ProjectSummary]
+    total: int = 0
+    page: int = 1
+    per_page: int = 20
+    pages: int = 1
 
 
 class ImportUrlRequest(BaseModel):
