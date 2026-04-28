@@ -433,12 +433,27 @@ class PreviewService:
             score -= 30
         elif coverage > 0.95:
             score -= 25
-        if color_variation < 18:
+
+        # Penalise only when almost no colour variety AND the image is dim — avoids
+        # rejecting valid single-colour renders like a pink figure on white.
+        if color_variation < 8 and background_brightness < 15:
             score -= 20
+
         if "snapmaker_compatible_final" in label:
             score += 5
-        if "_01" in label:
-            score -= 3
+
+        # Bambu/Orca slicer: plate_1 is ALWAYS the main build plate (the full product).
+        # Plates numbered 2+ are auxiliary, accessory, or support pieces.
+        # Extract the plate number and strongly prefer lower-numbered plates.
+        plate_num_match = re.search(r"plate[_\-\s]?(\d+)", label)
+        if plate_num_match:
+            plate_num = int(plate_num_match.group(1))
+            # plate_1 gets +30, plate_2 gets +20, plate_3 gets +10, etc.
+            score += max(0, 35 - (plate_num - 1) * 10)
+        elif "_01" in label:
+            # Do NOT penalise _01 files — they are typically primary renders.
+            pass
+
         if "thumbnail" in label:
             score -= 5
         if kind == "lifestyle":
