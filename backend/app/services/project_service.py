@@ -282,17 +282,37 @@ class ProjectService:
                 blocking_questions=[question for question in self.normalize_questions(upload_intake.get("questions", [])) if question["kind"] == "blocking"],
             ),
         }
-        # Defer sales_profile generation to the background queue so the upload
-        # request returns immediately.  The post-import AI enrichment job will
-        # also upgrade it to allow_llm=True once previews are ready.
+        # Defer heavy work so the upload request returns immediately:
+        #   1. sales_profile — will be built by post-import AI job (allow_llm=True)
+        #   2. build_manifest/write_manifest — formal Snapmaker manifest JSON (large write)
+        #   3. second save_manifest — only needed after #2 completes
         manifest["sales_profile"] = None
-        self.storage.save_manifest(manifest)
-        self.append_log(layout["folders"]["logs"], "Projeto criado e análise inicial concluída.")
-        project_manifest = self.manifest_service.build_manifest(manifest, saved_files, [])
-        self.manifest_service.write_manifest(layout["folders"]["root"], project_manifest)
-        manifest["manifest"] = project_manifest
         manifest["logs"] = [{"label": "processing.log", "path": self.storage.to_storage_url(layout["folders"]["logs"] / "processing.log"), "kind": "log"}]
         self.storage.save_manifest(manifest)
+        self.append_log(layout["folders"]["logs"], "Projeto criado e análise inicial concluída.")
+
+        # Snapshot of values captured for the deferred job (avoid closure over
+        # mutable `manifest` dict which may be modified by the caller after return).
+        _saved_files = list(saved_files)
+        _layout_root = layout["folders"]["root"]
+        _project_id = layout["version_name"]
+        _service_ref = self  # weak reference would be safer, but service is singleton-like
+
+        def _write_formal_manifest() -> None:
+            """Build and persist the Snapmaker project_manifest.json in the background."""
+            try:
+                fresh = _service_ref.storage.load_manifest(_project_id)
+                if fresh is None:
+                    return
+                project_manifest = _service_ref.manifest_service.build_manifest(fresh, _saved_files, [])
+                _service_ref.manifest_service.write_manifest(_layout_root, project_manifest)
+                fresh["manifest"] = project_manifest
+                _service_ref.storage.save_manifest(fresh)
+                logger.info("project_formal_manifest_written", extra={"project_id": _project_id})
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("project_formal_manifest_failed", extra={"project_id": _project_id, "error": str(exc)})
+
+        enqueue(f"formal-manifest-{_project_id}", _write_formal_manifest, max_retries=1)
         self.schedule_post_import_ai_enrichment(layout["version_name"])
         logger.info(
             "project_create_completed",
@@ -508,14 +528,28 @@ class ProjectService:
         if manifest is None:
             return None
         self.recover_stale_processing(manifest, persist=True)
-        # Read path: enrich in-memory only – no disk writes on every GET.
-        # Preview/sales data that needs saving will be written by the
-        # dedicated process / refresh-previews flows.
-        self.ensure_preview_fields(manifest, persist=False, extract_missing=False, generate_marketplace=False)
-        self.ensure_sales_profile(manifest, persist=False, allow_llm=False)
-        manifest_path = Path(manifest["storage_path"]) / "project_manifest.json"
-        if manifest_path.exists():
-            manifest["manifest"] = self.storage.read_json(manifest_path)
+        # GET is a pure read path.  Do NOT run any enrichment (preview scan,
+        # sales profile generation, marketplace asset generation) here.
+        # All enrichment happens during upload (background worker) and
+        # process_project.  Running it on every GET blocks the request thread
+        # and triggers repeated NFS directory scans.
+
+        # For project_manifest.json: the frontend only checks if the field is
+        # non-null to display a download link. Avoid reading the full JSON on
+        # every GET by constructing a lightweight stub when the file exists.
+        if manifest.get("manifest") is None:
+            manifest_path = Path(manifest["storage_path"]) / "project_manifest.json"
+            if manifest_path.is_file():
+                manifest["manifest"] = {
+                    "project_id": manifest.get("id", ""),
+                    "project_name": manifest.get("name", ""),
+                    "slug": manifest.get("slug", ""),
+                    "version": manifest.get("version", 1),
+                    "created_at": manifest.get("created_at"),
+                    "updated_at": manifest.get("updated_at"),
+                    "source_ecosystem": manifest.get("source_ecosystem", "generic"),
+                    "pipeline_version": "stored",
+                }
         return ProjectDetailResponse(**manifest)
 
     def delete_project(self, project_id: str) -> bool:

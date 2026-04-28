@@ -22,20 +22,64 @@ import threading
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Module-level TTL cache for list_manifests (shared across all StorageService
-# instances in the same process).  Invalidated on every save/delete.
+# Module-level TTL cache for list_manifests.
+# Keyed by str(storage_root) so tests with different tmp_path never collide.
+# Invalidated on every save/delete.
 # ---------------------------------------------------------------------------
-_manifest_cache: list[dict[str, Any]] | None = None
-_manifest_cache_at: float = 0.0
+_manifest_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 _manifest_cache_ttl: float = 30.0  # seconds
 _manifest_cache_lock = threading.Lock()
 
 
-def _invalidate_manifest_cache() -> None:
-    global _manifest_cache, _manifest_cache_at
+def _invalidate_manifest_cache(*, root: Path) -> None:
+    key = str(root)
     with _manifest_cache_lock:
-        _manifest_cache = None
-        _manifest_cache_at = 0.0
+        _manifest_cache.pop(key, None)
+
+
+def _get_manifest_cache(*, root: Path) -> list[dict[str, Any]] | None:
+    key = str(root)
+    with _manifest_cache_lock:
+        entry = _manifest_cache.get(key)
+        if entry and (time.monotonic() - entry[0]) < _manifest_cache_ttl:
+            return list(entry[1])
+        return None
+
+
+def _set_manifest_cache(data: list[dict[str, Any]], *, root: Path) -> None:
+    key = str(root)
+    with _manifest_cache_lock:
+        _manifest_cache[key] = (time.monotonic(), data)
+
+# ---------------------------------------------------------------------------
+# Per-project read cache (5 s TTL).
+# Prevents repeated NFS reads during the frontend's polling loop while a
+# project is processing.  Invalidated on every save_manifest / delete.
+# ---------------------------------------------------------------------------
+_project_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+_project_cache_ttl: float = 5.0
+_project_cache_lock = threading.Lock()
+
+
+def _set_project_cache(project_id: str, data: dict[str, Any], *, root: Path) -> None:
+    key = f"{root}::{project_id}"
+    with _project_cache_lock:
+        _project_cache[key] = (time.monotonic(), data)
+
+
+def _get_project_cache(project_id: str, *, root: Path) -> dict[str, Any] | None:
+    key = f"{root}::{project_id}"
+    with _project_cache_lock:
+        entry = _project_cache.get(key)
+        if entry and (time.monotonic() - entry[0]) < _project_cache_ttl:
+            return dict(entry[1])  # shallow copy – callers may mutate the dict
+        return None
+
+
+def _invalidate_project_cache(project_id: str, *, root: Path) -> None:
+    key = f"{root}::{project_id}"
+    with _project_cache_lock:
+        _project_cache.pop(key, None)
 
 
 class StorageService:
@@ -136,7 +180,11 @@ class StorageService:
     def write_json(self, path: Path, payload: dict[str, Any]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         encoded = json.dumps(payload, indent=2, ensure_ascii=False)
-        temp_path = path.with_name(f".{path.name}.tmp-{os.getpid()}-{int(time.time() * 1000)}")
+        # Include thread ID in temp name: two threads writing the same file
+        # within the same millisecond must use different temp paths.
+        temp_path = path.with_name(
+            f".{path.name}.tmp-{os.getpid()}-{threading.get_ident()}-{int(time.time() * 1000)}"
+        )
         temp_path.write_text(encoded, encoding="utf-8")
         os.replace(temp_path, path)
 
@@ -184,7 +232,8 @@ class StorageService:
         self.write_json(self.manifest_path(project_root), manifest)
         self.write_json(self.summary_path(project_root), self.build_project_summary(manifest))
         self.db.upsert_project(manifest)
-        _invalidate_manifest_cache()
+        _invalidate_manifest_cache(root=self.root)
+        _invalidate_project_cache(str(manifest.get("id", "")), root=self.root)
 
     def save_project_manifest(self, project_root: Path, payload: dict[str, Any]) -> None:
         self.write_json(project_root / "project_manifest.json", payload)
@@ -198,13 +247,22 @@ class StorageService:
 
     def load_manifest(self, project_id: str) -> dict[str, Any] | None:
         project_id = self._safe_project_id(project_id)
+
+        # Fast path 0: per-project 5-second read cache.
+        # Eliminates repeated NFS reads during the frontend's polling loop.
+        cached = _get_project_cache(project_id, root=self.root)
+        if cached is not None:
+            return cached
+
         # Fast path 1: DB tells us exactly where the directory is.
         storage_path = self.db.find_storage_path(project_id)
         if storage_path:
             project_dir = Path(storage_path)
             manifest_file = project_dir / "project.json"
             if manifest_file.exists():
-                return self.normalize_manifest_paths(self.read_json(manifest_file), project_dir)
+                result = self.normalize_manifest_paths(self.read_json(manifest_file), project_dir)
+                _set_project_cache(project_id, result, root=self.root)
+                return result
         # Fast path 2: project_id is always "{slug}_v{NNN}" – derive slug and
         # construct the exact path directly, avoiding any NFS glob scan.
         slug_match = re.match(r"^(.+)_v(\d+)$", project_id)
@@ -213,12 +271,16 @@ class StorageService:
             project_dir = self.root / slug / project_id
             manifest_file = project_dir / "project.json"
             if manifest_file.exists():
-                return self.normalize_manifest_paths(self.read_json(manifest_file), project_dir)
+                result = self.normalize_manifest_paths(self.read_json(manifest_file), project_dir)
+                _set_project_cache(project_id, result, root=self.root)
+                return result
         # Fallback: glob for legacy IDs that don't follow the naming convention.
         for project_dir in self.root.glob(f"*/{project_id}"):
             manifest = project_dir / "project.json"
             if manifest.exists():
-                return self.normalize_manifest_paths(self.read_json(manifest), project_dir)
+                result = self.normalize_manifest_paths(self.read_json(manifest), project_dir)
+                _set_project_cache(project_id, result, root=self.root)
+                return result
         return None
 
     def delete_project(self, project_id: str) -> bool:
@@ -241,21 +303,20 @@ class StorageService:
             if parent_dir != self.root and parent_dir.exists() and not any(parent_dir.iterdir()):
                 parent_dir.rmdir()
             self.db.delete_project(project_id)
-            _invalidate_manifest_cache()
+            _invalidate_manifest_cache(root=self.root)
+            _invalidate_project_cache(project_id, root=self.root)
             return True
         return False
 
     def list_manifests(self) -> list[dict[str, Any]]:
-        global _manifest_cache, _manifest_cache_at
-
         # Fast path 1: use the DB index (returns only the latest version per slug).
         if self.db.available and self.db.has_any_projects():
             return self.db.list_latest_projects()
 
-        # Fast path 2: in-memory TTL cache (avoids repeated NFS glob scans).
-        with _manifest_cache_lock:
-            if _manifest_cache is not None and (time.monotonic() - _manifest_cache_at) < _manifest_cache_ttl:
-                return list(_manifest_cache)
+        # Fast path 2: in-memory TTL cache keyed by storage root.
+        cached = _get_manifest_cache(root=self.root)
+        if cached is not None:
+            return cached
 
         # Slow path: scan the filesystem and populate the DB for future calls.
         manifests: list[dict[str, Any]] = []
@@ -300,9 +361,7 @@ class StorageService:
         result = sorted(by_slug.values(), key=lambda x: str(x.get("updated_at", "")), reverse=True)
 
         # Populate TTL cache so the next call within the window is O(1).
-        with _manifest_cache_lock:
-            _manifest_cache = result
-            _manifest_cache_at = time.monotonic()
+        _set_manifest_cache(result, root=self.root)
 
         return result
 
