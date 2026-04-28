@@ -206,7 +206,7 @@ class AuthService:
                 "client_id": client_id,
                 "redirect_uri": redirect_uri,
                 "scope": self.scope_param(definition["provider"], scopes),
-                "state": "snapmaker3d-studio",
+                "state": self._make_oauth_state(definition["provider"]),
                 **definition["auth_extra"],
             }
             auth_url = f"{definition['auth_base_url']}?{urlencode(query)}"
@@ -259,6 +259,14 @@ class AuthService:
             enabled=False,
             reason=config.reason,
         )
+
+    def _make_oauth_state(self, provider: str) -> str:
+        """Gera state HMAC-assinado com timestamp – compatível com _verify_oauth_state em auth.py."""
+        import time as _time
+        ts = str(int(_time.time()))
+        raw = f"{provider}:{ts}"
+        sig = hmac.new(self.settings.auth_token_secret.encode(), raw.encode(), hashlib.sha256).hexdigest()[:16]
+        return f"{raw}:{sig}"
 
     def recommended_redirect_uri(self, provider: str) -> str:
         return f"{self.settings.public_backend_origin.rstrip('/')}/api/v1/auth/oauth/{provider}/callback"
