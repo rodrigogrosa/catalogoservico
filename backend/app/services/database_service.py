@@ -27,8 +27,6 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_lock = threading.Lock()
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -45,7 +43,10 @@ def _make_engine(url: str) -> Any:
     from sqlalchemy import create_engine  # deferred – avoids import cost if unused
 
     kwargs: dict[str, Any] = {"pool_pre_ping": True}
-    if not url.startswith("postgresql"):
+    if url.startswith("postgresql"):
+        # Prevent hanging indefinitely on a slow/misconfigured PostgreSQL addon.
+        kwargs["connect_args"] = {"connect_timeout": 8}
+    else:
         # SQLite: only one thread at a time by default – relax that so the
         # FastAPI threadpool can share the same connection pool.
         kwargs["connect_args"] = {"check_same_thread": False}
@@ -106,6 +107,9 @@ class DatabaseService:
     def __init__(self, storage_root: Path) -> None:
         self.storage_root = storage_root
         self._engine: Any = None
+        # Instance-level lock so that multiple service instances (tests, etc.)
+        # do not contend on a shared global lock.
+        self._lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Internal
@@ -123,7 +127,7 @@ class DatabaseService:
     def _get_engine(self) -> Any:
         if self._engine is not None:
             return self._engine
-        with _lock:
+        with self._lock:
             if self._engine is not None:
                 return self._engine
             try:

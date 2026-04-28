@@ -25,14 +25,12 @@ class StorageService:
         self.settings = get_settings()
         self.root = self.settings.storage_root
         self.upload_chunk_size_bytes = 1024 * 1024
+        # DatabaseService is lazy: the engine (and any network connection) is
+        # not created until the first actual DB read/write.  Do NOT call
+        # db.available or db.sync_from_filesystem here – that would block the
+        # FastAPI startup / first request on slow NFS or a PostgreSQL addon
+        # that is still initialising.
         self.db = DatabaseService(self.root)
-        # Populate the DB index from disk on first start if it is empty.
-        # This is a cheap O(N) scan that only runs once per process lifetime.
-        if self.db.available and not self.db.has_any_projects():
-            try:
-                self.db.sync_from_filesystem(self.root)
-            except Exception:
-                logger.exception("storage_db_initial_sync_failed")
 
     def slugify(self, raw_name: str) -> str:
         value = raw_name.strip().lower()
