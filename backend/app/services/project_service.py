@@ -475,10 +475,11 @@ class ProjectService:
         if manifest is None:
             return None
         self.recover_stale_processing(manifest, persist=True)
-        # Endpoint de leitura deve ser rápido e não bloquear UI com extrações pesadas.
-        # A regeneração de previews fica no fluxo dedicado de processamento/refresh.
-        self.ensure_preview_fields(manifest, persist=True, extract_missing=False, generate_marketplace=False)
-        self.ensure_sales_profile(manifest, persist=True, allow_llm=False)
+        # Read path: enrich in-memory only – no disk writes on every GET.
+        # Preview/sales data that needs saving will be written by the
+        # dedicated process / refresh-previews flows.
+        self.ensure_preview_fields(manifest, persist=False, extract_missing=False, generate_marketplace=False)
+        self.ensure_sales_profile(manifest, persist=False, allow_llm=False)
         manifest_path = Path(manifest["storage_path"]) / "project_manifest.json"
         if manifest_path.exists():
             manifest["manifest"] = self.storage.read_json(manifest_path)
@@ -491,6 +492,93 @@ class ProjectService:
         if manifest.get("status") == "processing":
             raise ValueError("Nao e seguro excluir um projeto enquanto ele esta em processamento.")
         return self.storage.delete_project(project_id)
+
+    def list_project_versions(self, project_id: str) -> list[ProjectSummary]:
+        """Return all stored versions for the same slug as *project_id*, newest first."""
+        manifest = self.storage.load_manifest(project_id)
+        if manifest is None:
+            return []
+        slug = manifest.get("slug", "")
+        if not slug:
+            return []
+        summaries: list[ProjectSummary] = []
+        for item in self.storage.list_versions_for_slug(slug):
+            try:
+                summaries.append(ProjectSummary(**item))
+            except Exception:
+                continue
+        return summaries
+
+    def create_reprocess_version(self, project_id: str, request: ProcessProjectRequest) -> ProjectDetailResponse:
+        """Copy original files to a new version dir and prepare the manifest.
+
+        The caller is responsible for starting the pipeline on the returned project.
+        Raises ``ValueError`` if the project is not found or already processing.
+        """
+        manifest = self.storage.load_manifest(project_id)
+        if manifest is None:
+            raise ValueError("Projeto não encontrado.")
+        if manifest.get("status") == "processing":
+            raise ValueError("Projeto está em processamento. Aguarde concluir antes de reprocessar.")
+
+        new_layout = self.storage.create_reprocess_version(manifest)
+        now = datetime.now(tz=timezone.utc)
+        new_original = new_layout["folders"]["original"]
+
+        # Rebuild input_files pointing to the new original directory.
+        new_input_files = []
+        for file_info in manifest.get("input_files", []):
+            new_path = new_original / Path(str(file_info.get("path", ""))).name
+            if new_path.exists():
+                new_input_files.append({**file_info, "path": str(new_path)})
+
+        new_manifest: dict[str, Any] = {
+            # Carry over static fields from the source version.
+            "name": manifest.get("name"),
+            "slug": new_layout["slug"],
+            "input_format": manifest.get("input_format"),
+            "source_ecosystem": manifest.get("source_ecosystem"),
+            "original_filename": manifest.get("original_filename"),
+            "size_bytes": manifest.get("size_bytes", 0),
+            "findings": list(manifest.get("findings") or []),
+            "risks": list(manifest.get("risks") or []),
+            "questions_pending": list(manifest.get("questions_pending") or []),
+            "blocking_questions": list(manifest.get("blocking_questions") or []),
+            "bambu_parameter_equivalence": list(manifest.get("bambu_parameter_equivalence") or []),
+            # New version-specific fields.
+            "id": new_layout["version_name"],
+            "version": new_layout["version"],
+            "storage_path": str(new_layout["folders"]["root"]),
+            "status": "uploaded",
+            "created_at": now.isoformat(),
+            "updated_at": now.isoformat(),
+            "input_files": new_input_files,
+            "requested_actions": ["reprocess"],
+            "processing_stages": self.build_initial_stages(now),
+            "stage_metrics": [],
+            "decisions": [],
+            "artifacts": [],
+            "previews": [],
+            "preview_url": None,
+            "reports": [],
+            "logs": [],
+            "bundles": [],
+            "manifest": None,
+            "snapshot": None,
+            "printable_score": manifest.get("printable_score"),
+            "sales_profile": manifest.get("sales_profile"),
+            "metadata": {
+                **(manifest.get("metadata") or {}),
+                "reprocess_of": project_id,
+                "request_parameters": request.model_dump(mode="json"),
+            },
+        }
+        self.storage.save_manifest(new_manifest)
+        self.append_log(
+            new_layout["folders"]["logs"],
+            f"Nova versão criada por reprocessamento a partir de {project_id}.",
+        )
+        return ProjectDetailResponse(**new_manifest)
 
     async def process_project(self, project_id: str, request: ProcessProjectRequest) -> None:
         lock = self.project_processing_lock(project_id)

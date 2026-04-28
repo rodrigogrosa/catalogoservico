@@ -12,9 +12,11 @@ import {
   fetchProject,
   fetchProjectBundle,
   fetchProjectPrintFile,
+  fetchProjectVersions,
   fetchProjects,
   fileUrl,
   processProject,
+  reprocessProject,
   type ProcessPayload,
   type ProcessingStage,
   type ProjectCompareResponse,
@@ -94,10 +96,19 @@ const sectionMeta = {
 export function ProjectDetailView({ project, section }: Props) {
   const { can } = useAuth();
   const [currentProject, setCurrentProject] = useState<ProjectDetail>(project);
-  const [payload, setPayload] = useState<ProcessPayload>(defaultPayload);
+  const [payload, setPayload] = useState<ProcessPayload>(() => {
+    // Restore the last processing parameters saved for this project, if any.
+    const saved = project.metadata?.request_parameters as ProcessPayload | undefined;
+    if (saved && typeof saved === "object" && Object.keys(saved).length > 0) {
+      return { ...defaultPayload, ...saved };
+    }
+    return defaultPayload;
+  });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isReprocessing, setIsReprocessing] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [allProjects, setAllProjects] = useState<ProjectSummary[]>([]);
+  const [versions, setVersions] = useState<ProjectSummary[]>([]);
   const [comparisonTarget, setComparisonTarget] = useState("");
   const [comparison, setComparison] = useState<ProjectCompareResponse | null>(null);
   const [bundlePath, setBundlePath] = useState<string | null>(null);
@@ -111,18 +122,21 @@ export function ProjectDetailView({ project, section }: Props) {
   const completedStages = processStages.filter((item) => item.status === "completed" || item.status === "skipped").length;
   const progressPercent = processStages.length ? Math.round((completedStages / processStages.length) * 100) : 0;
   const mainPreview = useMemo(() => selectMainPreview(currentProject), [currentProject]);
-  const siblingVersions = useMemo(
-    () => allProjects.filter((item) => item.slug === currentProject.slug && item.id !== currentProject.id),
-    [allProjects, currentProject.slug, currentProject.id],
-  );
+  const siblingVersions = versions.filter((item) => item.id !== currentProject.id);
 
   useEffect(() => {
     setCurrentProject(project);
+    // Reload saved parameters whenever the project changes.
+    const saved = project.metadata?.request_parameters as ProcessPayload | undefined;
+    if (saved && typeof saved === "object" && Object.keys(saved).length > 0) {
+      setPayload((prev) => ({ ...prev, ...saved }));
+    }
   }, [project]);
 
   useEffect(() => {
     void fetchProjects().then(setAllProjects).catch(() => undefined);
-  }, []);
+    void fetchProjectVersions(project.id).then(setVersions).catch(() => undefined);
+  }, [project.id]);
 
   useEffect(() => {
     if (!isProcessing) return;
@@ -149,6 +163,25 @@ export function ProjectDetailView({ project, section }: Props) {
       setMessage(error instanceof Error ? error.message : "Falha ao iniciar processamento.");
     } finally {
       setIsSubmitting(false);
+    }
+  }
+
+  async function handleReprocess() {
+    setIsReprocessing(true);
+    setMessage(null);
+    try {
+      const newProject = await reprocessProject(currentProject.id, payload);
+      // Refresh version list and navigate to the new version.
+      void fetchProjectVersions(newProject.id).then(setVersions).catch(() => undefined);
+      setCurrentProject(newProject);
+      setMessage(
+        `Nova versão v${String(newProject.version).padStart(3, "0")} criada e processamento iniciado. ` +
+          "Acompanhe a evolução na aba Diagnóstico.",
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Falha ao criar nova versão.");
+    } finally {
+      setIsReprocessing(false);
     }
   }
 
@@ -228,8 +261,11 @@ export function ProjectDetailView({ project, section }: Props) {
           payload={payload}
           setPayload={setPayload}
           isSubmitting={isSubmitting}
+          isReprocessing={isReprocessing}
           canProcess={can(PERMISSIONS.projectsProcess)}
           onProcess={handleProcess}
+          onReprocess={handleReprocess}
+          versions={siblingVersions}
         />
       ) : null}
 
@@ -356,15 +392,21 @@ function ProcessSection({
   payload,
   setPayload,
   isSubmitting,
+  isReprocessing,
   canProcess,
   onProcess,
+  onReprocess,
+  versions,
 }: {
   project: ProjectDetail;
   payload: ProcessPayload;
   setPayload: React.Dispatch<React.SetStateAction<ProcessPayload>>;
   isSubmitting: boolean;
+  isReprocessing: boolean;
   canProcess: boolean;
   onProcess: () => Promise<void>;
+  onReprocess: () => Promise<void>;
+  versions: ProjectSummary[];
 }) {
   return (
     <div className="space-y-6">
@@ -539,14 +581,47 @@ function ProcessSection({
         title="Disparar nova rodada"
         description={`Projeto atual: ${project.name}. A nova execução preserva o histórico existente.`}
       >
-        <button
-          type="button"
-          onClick={() => void onProcess()}
-          disabled={isSubmitting || !canProcess}
-          className="w-full rounded-[1.4rem] bg-slate-950 px-5 py-5 text-lg font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60"
-        >
-          {!canProcess ? "Sem permissão para processar" : isSubmitting ? "Iniciando..." : "Processar projeto"}
-        </button>
+        <div className="space-y-3">
+          <button
+            type="button"
+            onClick={() => void onProcess()}
+            disabled={isSubmitting || isReprocessing || !canProcess}
+            className="w-full rounded-[1.4rem] bg-slate-950 px-5 py-5 text-lg font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60"
+          >
+            {!canProcess ? "Sem permissão para processar" : isSubmitting ? "Iniciando..." : "Processar projeto (mesma versão)"}
+          </button>
+          <button
+            type="button"
+            onClick={() => void onReprocess()}
+            disabled={isSubmitting || isReprocessing || !canProcess}
+            className="w-full rounded-[1.4rem] bg-blue-700 px-5 py-4 text-base font-semibold text-white transition hover:bg-blue-800 disabled:opacity-60"
+          >
+            {isReprocessing ? "Criando nova versão..." : "Reprocessar → nova versão (sem re-upload)"}
+          </button>
+          <p className="text-center text-xs text-slate-500">
+            "Nova versão" copia os arquivos originais e inicia o pipeline sem precisar enviar o arquivo novamente.
+          </p>
+        </div>
+        {versions.length > 0 ? (
+          <div className="mt-4 border-t border-slate-100 pt-4">
+            <p className="mb-2 text-sm font-medium text-slate-700">Histórico de versões deste projeto</p>
+            <ul className="space-y-1">
+              {versions.map((v) => (
+                <li key={v.id} className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-sm">
+                  <span className="font-mono text-slate-700">
+                    v{String(v.version).padStart(3, "0")} <span className="ml-2 text-slate-400">{v.status}</span>
+                  </span>
+                  <a
+                    href={`/projects/${v.id}`}
+                    className="text-blue-600 hover:underline"
+                  >
+                    Abrir
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
       </SectionCard>
     </div>
   );

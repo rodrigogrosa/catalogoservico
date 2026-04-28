@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
@@ -181,3 +182,36 @@ async def compare_projects(
         return service.compare_projects(project_id, other_project_id)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/{project_id}/reprocess", response_model=ProjectDetailResponse)
+async def reprocess_project(
+    project_id: str,
+    payload: ProcessProjectRequest,
+    background_tasks: BackgroundTasks,
+    service: ProjectService = Depends(get_project_service),
+    current_user: AuthUser = Depends(require_permission("projects.process")),
+) -> ProjectDetailResponse:
+    """Create a new version from existing original files and start the pipeline.
+
+    The user does *not* need to re-upload the source file.  The original files
+    are copied to the new version directory automatically.
+    """
+    logger.info("project_reprocess_requested", extra={"username": current_user.username, "project_id": project_id})
+    try:
+        new_project = await asyncio.to_thread(service.create_reprocess_version, project_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    background_tasks.add_task(service.process_project, new_project.id, payload)
+    return new_project
+
+
+@router.get("/{project_id}/versions", response_model=list[ProjectSummary])
+async def list_project_versions(
+    project_id: str,
+    service: ProjectService = Depends(get_project_service),
+    current_user: AuthUser = Depends(require_permission("projects.view")),
+) -> list[ProjectSummary]:
+    """Return all stored versions for the same slug, newest first."""
+    logger.info("project_versions_requested", extra={"username": current_user.username, "project_id": project_id})
+    return service.list_project_versions(project_id)

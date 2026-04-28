@@ -718,6 +718,28 @@ export async function processProject(id: string, payload: ProcessPayload): Promi
   return response.json();
 }
 
+export async function reprocessProject(id: string, payload: ProcessPayload): Promise<ProjectDetail> {
+  const response = await apiFetchResilient(`/projects/${id}/reprocess`, {
+    method: "POST",
+    headers: {
+      ...authHeaders(),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw await parseApiError(response, "Falha ao criar nova versão para reprocessamento");
+  return response.json();
+}
+
+export async function fetchProjectVersions(id: string): Promise<ProjectSummary[]> {
+  const response = await apiFetchResilient(`/projects/${id}/versions`, {
+    cache: "no-store",
+    headers: authHeaders(),
+  });
+  if (!response.ok) throw await parseApiError(response, "Falha ao carregar versões do projeto");
+  return response.json();
+}
+
 export async function fetchProjectBundle(id: string): Promise<ArtifactReference> {
   const response = await apiFetchResilient(`/projects/${id}/bundle`, { cache: "no-store", headers: authHeaders() });
   if (!response.ok) throw await parseApiError(response, "Falha ao gerar bundle");
