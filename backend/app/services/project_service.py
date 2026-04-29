@@ -287,10 +287,11 @@ class ProjectService:
             ),
         }
         # Defer heavy work so the upload request returns immediately:
-        #   1. sales_profile — will be built by post-import AI job (allow_llm=True)
+        #   1. sales_profile — generated deterministically NOW (all needed info is available at
+        #      upload time: name, size, format, ecosystem). AI copy upgrade happens in background.
         #   2. build_manifest/write_manifest — formal Snapmaker manifest JSON (large write)
         #   3. second save_manifest — only needed after #2 completes
-        manifest["sales_profile"] = None
+        manifest["sales_profile"] = self.sales_service.build_sales_profile(manifest, allow_llm=False)
         manifest["logs"] = [{"label": "processing.log", "path": self.storage.to_storage_url(layout["folders"]["logs"] / "processing.log"), "kind": "log"}]
         self.storage.save_manifest(manifest)
         self.append_log(layout["folders"]["logs"], "Projeto criado e análise inicial concluída.")
@@ -1446,17 +1447,24 @@ class ProjectService:
                         all_previews.append(preview)
                 manifest["previews"] = self.curate_preview_assets(all_previews)
 
-                # Only regenerate sales_profile if process_project hasn't already upgraded it
-                # beyond the deterministic baseline (it generates with allow_llm=True).
-                current_copy_source = (manifest.get("sales_profile") or {}).get("copy_source", "deterministic")
-                if current_copy_source == "deterministic":
-                    self.ensure_sales_profile(manifest, persist=False, allow_llm=True)
-
                 manifest["updated_at"] = datetime.now(tz=timezone.utc).isoformat()
                 self.storage.save_manifest(manifest)
                 self.append_log(project_root / "logs", "Pós-importação: enriquecimento de mídia e copy concluído.", stage_key="post_import_ai", status="completed")
             except Exception as exc:  # noqa: BLE001
                 logger.warning("post_import_ai_enrichment_failed", extra={"project_id": project_id, "error": str(exc)})
+
+            # AI copy upgrade is isolated so that preview failures above cannot prevent it.
+            # The deterministic ad was already written at upload time; here we only upgrade to
+            # AI-generated copy when an AI provider is available.
+            try:
+                manifest_for_copy = self.storage.load_manifest(project_id)
+                if manifest_for_copy is not None:
+                    current_copy_source = (manifest_for_copy.get("sales_profile") or {}).get("copy_source", "deterministic")
+                    if current_copy_source == "deterministic":
+                        self.ensure_sales_profile(manifest_for_copy, persist=True, allow_llm=True)
+                        logger.info("post_import_sales_copy_upgraded", extra={"project_id": project_id, "copy_source": (manifest_for_copy.get("sales_profile") or {}).get("copy_source")})
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("post_import_sales_copy_upgrade_failed", extra={"project_id": project_id, "error": str(exc)})
 
         worker = enqueue(
             f"post-import-ai-{project_id}",
