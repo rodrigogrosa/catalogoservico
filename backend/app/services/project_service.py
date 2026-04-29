@@ -263,6 +263,10 @@ class ProjectService:
                 "user_answers": [],
                 "execution_snapshot": {},
                 "ai_media_pipeline": {"status": "scheduled", "generated_count": 0, "attempts": []},
+                # Slicer safe-defaults: embedded on every import so the user
+                # (and the process pipeline) always has the recommended settings
+                # pre-computed from the Snapmaker U1 profile.
+                "slicer_hints": self.slicer_validation.profile_service.load_profile().get("slicer_safe_defaults", {}),
             },
             "processing_stages": self.build_initial_stages(now),
             "stage_metrics": [],

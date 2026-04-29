@@ -119,5 +119,24 @@
     "Perfis Bambu precisam ser sanitizados para Snapmaker Orca 2.3.0.",
     "Primeira camada de peças esbeltas deve usar brim ou raft.",
     "Materiais abrasivos exigem bico endurecido."
-  ]
+  ],
+  "slicer_safe_defaults": {
+    "note": "Configurações que DEVEM ser aplicadas ao importar qualquer projeto no Snapmaker Orca para garantir qualidade e evitar falhas.",
+    "use_relative_e_distances": "1",
+    "enable_support": "1",
+    "support_type": "normal(auto)",
+    "support_threshold_angle": 40,
+    "support_on_build_plate_only": false,
+    "prime_tower_enable": false,
+    "avoid_crossing_perimeters": true,
+    "gcode_flavor": "marlin",
+    "default_objective_preset": "quality",
+    "orientation_priority": "support_economy",
+    "rationale": {
+      "use_relative_e_distances": "Obrigatório para compatibilidade com a Wipe/Prime Tower no Snapmaker Orca. Sem isso o slicer rejeita a torre com erro 'use_relative_e_distances=1'.",
+      "enable_support": "Suportes ATIVOS por padrão evitam falhas de impressão em overhangs acima de 40 graus.",
+      "prime_tower_enable": "Prime tower desativada por padrão; se o usuário ativar, use_relative_e_distances=1 já estará ativo.",
+      "default_objective_preset": "Preset quality prioriza qualidade de impressão e reduz risco de falha."
+    }
+  }
 }

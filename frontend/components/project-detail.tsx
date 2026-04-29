@@ -38,7 +38,7 @@ const defaultPayload: ProcessPayload = {
   scale_mode: "keep",
   unit_mode: "auto",
   hollowing: false,
-  objective_preset: "balanced",
+  objective_preset: "quality",
   orientation_priority: "support_economy",
   target_nozzle_mm: 0.4,
   supports: "auto",

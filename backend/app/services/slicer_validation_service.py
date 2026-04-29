@@ -41,13 +41,26 @@ class SlicerValidationService:
             risks.append("gcode_flavor não está em Marlin para o fluxo Snapmaker.")
         if settings.get("printer_model") != "Snapmaker U1 0.4 nozzle":
             risks.append("printer_model exportado difere do perfil seguro esperado.")
-        if settings.get("use_relative_e_distances") == "1":
-            risks.append("Extrusão relativa ainda ativa no export final.")
-        if settings.get("use_relative_e_distances") == "0":
+
+        # use_relative_e_distances=1 is REQUIRED for Prime/Wipe Tower in Snapmaker Orca.
+        # If a wipe tower is configured and relative E is disabled, Orca will error on open.
+        prime_tower_active = settings.get("prime_tower_enable") in {"1", "true", True} or (
+            settings.get("prime_tower_width") not in {None, "", "0", "2"}
+        )
+        has_relative_e = settings.get("use_relative_e_distances") == "1"
+        if prime_tower_active and not has_relative_e:
+            risks.append(
+                "Prime Tower / Wipe Tower está ativo mas use_relative_e_distances=0. "
+                "O Snapmaker Orca vai rejeitar o projeto com erro. "
+                "Ative 'Relative E distances' no perfil da impressora antes de exportar."
+            )
+
+        if not has_relative_e:
             for key in ("before_layer_change_gcode", "layer_change_gcode", "layer_gcode"):
                 current = settings.get(key)
                 if isinstance(current, str) and "G92 E0" in current:
                     risks.append(f"{key} contém G92 E0 apesar do fluxo usar extrusão absoluta.")
+
         if settings.get("prime_tower_width") not in {None, "2"}:
             findings.append("prime_tower_width foi preservado com valor diferente do fallback mínimo.")
         if settings.get("raft_first_layer_expansion") not in {None, "0"}:

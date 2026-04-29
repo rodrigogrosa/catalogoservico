@@ -245,7 +245,7 @@ class ProcessProjectRequest(BaseModel):
     transform_preferences: TransformPreferences = Field(default_factory=TransformPreferences)
     supports: Literal["auto", "disabled", "ask"] = "auto"
     target_material: str | None = None
-    objective_preset: str = "balanced"
+    objective_preset: str = "quality"
     orientation_priority: Literal["aesthetics", "strength", "speed", "support_economy"] = "support_economy"
     target_nozzle_mm: float = 0.4
     material_preferences: MaterialPreferences = Field(default_factory=MaterialPreferences)
