@@ -1,4 +1,23 @@
 services:
+
+  # ── Shared infrastructure ──────────────────────────────────────────────────
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: >
+      redis-server
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --save ""
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ── Backend (writer + all non-project routes) ─────────────────────────────
+
   backend:
     restart: unless-stopped
     build:
@@ -11,6 +30,7 @@ services:
       PUBLIC_BACKEND_ORIGIN: https://127.0.0.1:8443
       ALLOWED_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
       SNAPMAKER_STORAGE_ROOT: /data/SnapMaker3d
+      REDIS_URL: redis://redis:6379/0
       OLLAMA_ENABLED: "true"
       OLLAMA_BASE_URL: http://host.docker.internal:11434
       OLLAMA_MODEL: qwen2.5:7b
@@ -23,11 +43,42 @@ services:
       - ${HOME}/Downloads/Projetos3d/SnapMaker3d:/data/SnapMaker3d
     ports:
       - "8010:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health/ready', timeout=3)"]
       interval: 30s
       timeout: 5s
       retries: 5
+
+  # ── Projects Read Microservice (GET /api/v1/projects*) ───────────────────
+
+  svc-projects-read:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: Dockerfile.svc-read
+    environment:
+      SNAPMAKER_STORAGE_ROOT: /data/SnapMaker3d
+      REDIS_URL: redis://redis:6379/0
+      ALLOWED_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+      AUTH_TOKEN_SECRET: ${AUTH_TOKEN_SECRET:?AUTH_TOKEN_SECRET is required}
+      AUTH_TOKEN_TTL_HOURS: 12
+      MASTER_USERNAME: ${MASTER_USERNAME:-admin}
+      MASTER_PASSWORD: ${MASTER_PASSWORD:?MASTER_PASSWORD is required}
+    volumes:
+      - ${HOME}/Downloads/Projetos3d/SnapMaker3d:/data/SnapMaker3d:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health/ready', timeout=3)"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+
+  # ── Frontend ──────────────────────────────────────────────────────────────
 
   frontend:
     restart: unless-stopped
@@ -52,15 +103,20 @@ services:
       timeout: 5s
       retries: 5
 
+  # ── TLS proxy / API Gateway ──────────────────────────────────────────────
+
   oauth_proxy:
     restart: unless-stopped
     image: nginx:1.27-alpine
     depends_on:
       backend:
         condition: service_healthy
+      svc-projects-read:
+        condition: service_healthy
     volumes:
-      - ./infra/nginx/oauth-proxy.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./infra/nginx/api-gateway.conf:/etc/nginx/conf.d/default.conf:ro
       - ./infra/certs/local-oauth.crt:/etc/nginx/certs/local-oauth.crt:ro
       - ./infra/certs/local-oauth.key:/etc/nginx/certs/local-oauth.key:ro
     ports:
       - "8443:443"
+

@@ -14,6 +14,7 @@ from typing import Any
 from fastapi import UploadFile
 
 from app.core.config import get_settings
+from app.core import redis_cache
 from app.services.database_service import DatabaseService
 
 
@@ -232,8 +233,11 @@ class StorageService:
         self.write_json(self.manifest_path(project_root), manifest)
         self.write_json(self.summary_path(project_root), self.build_project_summary(manifest))
         self.db.upsert_project(manifest)
+        # In-process caches
         _invalidate_manifest_cache(root=self.root)
         _invalidate_project_cache(str(manifest.get("id", "")), root=self.root)
+        # Redis cache: invalidate across all processes / replicas
+        redis_cache.invalidate_project(str(self.root), str(manifest.get("id", "")))
 
     def save_project_manifest(self, project_root: Path, payload: dict[str, Any]) -> None:
         self.write_json(project_root / "project_manifest.json", payload)
@@ -303,8 +307,11 @@ class StorageService:
             if parent_dir != self.root and parent_dir.exists() and not any(parent_dir.iterdir()):
                 parent_dir.rmdir()
             self.db.delete_project(project_id)
+            # In-process caches
             _invalidate_manifest_cache(root=self.root)
             _invalidate_project_cache(project_id, root=self.root)
+            # Redis cache
+            redis_cache.invalidate_project(str(self.root), project_id)
             return True
         return False
 

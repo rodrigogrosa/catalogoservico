@@ -68,6 +68,7 @@ class Settings(BaseSettings):
     instagram_oauth_redirect_uri: str = ""
     public_backend_origin: str = "https://api.euachei3d.com.br"
     public_frontend_origin: str = "https://app.euachei3d.com.br"
+    redis_url: str = Field(default="", alias="REDIS_URL")
 
     @property
     def storage_root(self) -> Path:

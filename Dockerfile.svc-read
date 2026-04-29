@@ -1,0 +1,19 @@
+FROM python:3.13-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app/backend
+
+COPY backend/requirements.txt /app/backend/requirements.txt
+RUN pip install --no-cache-dir -r /app/backend/requirements.txt
+
+COPY backend /app/backend
+
+EXPOSE 8001
+
+HEALTHCHECK --interval=15s --timeout=3s --retries=5 \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health/ready', timeout=3)"
+
+# 2 workers: reader is stateless and CPU-light; all shared state is in Redis
+CMD ["uvicorn", "svc_projects_read.app:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "2", "--log-level", "warning"]
