@@ -71,7 +71,8 @@ def test_save_manifest_writes_compact_summary(tmp_path: Path, monkeypatch) -> No
     assert summary_file.exists()
     summary = storage.read_json(summary_file)
     assert summary["id"] == layout["version_name"]
-    assert summary["sales_profile"] is None
+    assert isinstance(summary["sales_profile"], dict), "sales_profile deve ser preservado no summary"
+    assert summary["sales_profile"]["copy_source"] == "deterministic"
     assert "metadata" not in summary
     get_settings.cache_clear()
 

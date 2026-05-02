@@ -65,10 +65,15 @@ CREATE TABLE IF NOT EXISTS projects (
     storage_path     TEXT    NOT NULL,
     preview_url      TEXT,
     printable_score  TEXT,
+    sales_profile    TEXT,
     created_at       TEXT    NOT NULL,
     updated_at       TEXT    NOT NULL
 )
 """
+
+_SCHEMA_MIGRATIONS = [
+    "ALTER TABLE projects ADD COLUMN IF NOT EXISTS sales_profile TEXT",
+]
 
 _INDEX_DDL = [
     "CREATE INDEX IF NOT EXISTS idx_projects_updated_at ON projects (updated_at DESC)",
@@ -83,6 +88,12 @@ def _bootstrap_schema(engine: Any) -> None:
         conn.execute(text(_SCHEMA_DDL))
         for stmt in _INDEX_DDL:
             conn.execute(text(stmt))
+        # Apply incremental migrations (idempotent — IF NOT EXISTS / ignored on error).
+        for migration in _SCHEMA_MIGRATIONS:
+            try:
+                conn.execute(text(migration))
+            except Exception:
+                pass  # Column already exists (SQLite doesn't support IF NOT EXISTS)
 
 
 # ---------------------------------------------------------------------------
@@ -186,6 +197,7 @@ class DatabaseService:
         if not project_id:
             return
         ps = manifest.get("printable_score")
+        sp = manifest.get("sales_profile")
         row: dict[str, Any] = {
             "id": project_id,
             "slug": manifest.get("slug") or "",
@@ -197,6 +209,7 @@ class DatabaseService:
             "storage_path": str(manifest.get("storage_path") or ""),
             "preview_url": manifest.get("preview_url"),
             "printable_score": json.dumps(ps) if isinstance(ps, dict) else None,
+            "sales_profile": json.dumps(sp) if isinstance(sp, dict) else None,
             "created_at": str(manifest.get("created_at") or ""),
             "updated_at": str(manifest.get("updated_at") or ""),
         }
@@ -215,11 +228,11 @@ class DatabaseService:
                             INSERT INTO projects
                                 (id, slug, name, version, status, input_format,
                                  source_ecosystem, storage_path, preview_url,
-                                 printable_score, created_at, updated_at)
+                                 printable_score, sales_profile, created_at, updated_at)
                             VALUES
                                 (:id, :slug, :name, :version, :status, :input_format,
                                  :source_ecosystem, :storage_path, :preview_url,
-                                 :printable_score, :created_at, :updated_at)
+                                 :printable_score, :sales_profile, :created_at, :updated_at)
                             ON CONFLICT (id) DO UPDATE SET
                                 name             = EXCLUDED.name,
                                 version          = EXCLUDED.version,
@@ -229,6 +242,7 @@ class DatabaseService:
                                 storage_path     = EXCLUDED.storage_path,
                                 preview_url      = EXCLUDED.preview_url,
                                 printable_score  = EXCLUDED.printable_score,
+                                sales_profile    = EXCLUDED.sales_profile,
                                 updated_at       = EXCLUDED.updated_at
                         """),
                         row,
@@ -239,11 +253,11 @@ class DatabaseService:
                             INSERT OR REPLACE INTO projects
                                 (id, slug, name, version, status, input_format,
                                  source_ecosystem, storage_path, preview_url,
-                                 printable_score, created_at, updated_at)
+                                 printable_score, sales_profile, created_at, updated_at)
                             VALUES
                                 (:id, :slug, :name, :version, :status, :input_format,
                                  :source_ecosystem, :storage_path, :preview_url,
-                                 :printable_score, :created_at, :updated_at)
+                                 :printable_score, :sales_profile, :created_at, :updated_at)
                         """),
                         row,
                     )
@@ -280,7 +294,7 @@ class DatabaseService:
                     _t("""
                         SELECT id, slug, name, version, status, input_format,
                                source_ecosystem, storage_path, preview_url,
-                               printable_score, created_at, updated_at
+                               printable_score, sales_profile, created_at, updated_at
                         FROM   projects p
                         WHERE  version = (
                             SELECT MAX(p2.version)
@@ -324,7 +338,7 @@ class DatabaseService:
                     _t("""
                         SELECT id, slug, name, version, status, input_format,
                                source_ecosystem, storage_path, preview_url,
-                               printable_score, created_at, updated_at
+                               printable_score, sales_profile, created_at, updated_at
                         FROM   projects
                         WHERE  slug = :slug
                         ORDER  BY version DESC
@@ -372,5 +386,11 @@ class DatabaseService:
                 item["printable_score"] = json.loads(item["printable_score"])
             except Exception:
                 item["printable_score"] = None
-        item.setdefault("sales_profile", None)
+        if item.get("sales_profile"):
+            try:
+                item["sales_profile"] = json.loads(item["sales_profile"])
+            except Exception:
+                item["sales_profile"] = None
+        else:
+            item["sales_profile"] = None
         return item

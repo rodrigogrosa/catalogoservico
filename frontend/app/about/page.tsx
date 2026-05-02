@@ -20,6 +20,7 @@ export default function AboutPage() {
         </div>
       ) : (
         <div className="portal-stack pb-12">
+          {/* Posicionamento */}
           <section className="py-8 md:py-10">
             <div className="portal-card rounded-[1.6rem] px-6 py-6 md:px-8 md:py-8">
               <p className="section-kicker">Posicionamento</p>
@@ -31,6 +32,7 @@ export default function AboutPage() {
             </div>
           </section>
 
+          {/* Áreas + Destino padrão */}
           <section className="grid gap-6 py-2 lg:grid-cols-2">
             <TopicCard
               title="Áreas do portal"
@@ -41,27 +43,52 @@ export default function AboutPage() {
                 "Configuração: usuários, permissões, login social e provedores de IA.",
               ]}
             />
-            <TopicCard
-              title="Destino padrão"
-              points={[
-                "Todos os artefatos gerados ficam versionados em:",
-                "~/Downloads/Projetos3d/SnapMaker3d",
-                "Cada projeto mantém histórico em subpastas próprias para original, processado, export, relatórios, previews e logs.",
-              ]}
-            />
+            <div className="portal-card rounded-[1.6rem] px-6 py-6 md:px-8 md:py-7">
+              <p className="section-kicker">Destino padrão</p>
+              <p className="mt-4 font-mono text-sm font-medium text-slate-800">
+                ~/Downloads/Projetos3d/SnapMaker3d
+              </p>
+              <p className="mt-3 text-base leading-7 text-slate-600">
+                Todos os artefatos ficam versionados em subpastas por projeto.
+                Cada versão mantém histórico separado para original, processado,
+                export, relatórios, previews e logs — sem sobrescrever arquivos anteriores.
+              </p>
+            </div>
           </section>
 
-          <section className="grid gap-6 py-6 lg:grid-cols-2">
-            <TopicCard
-              title="Fluxo"
-              points={[
-                "1. Entrada: upload de arquivo ou importação por link.",
-                "2. Análise: validação de formato, malha e metadados.",
-                "3. Conversão: adaptação Bambu/Snapmaker com sanidade de parâmetros.",
-                "4. Saída: geração de arquivo final, previews, manifesto e relatórios.",
-                "5. Comercial: preparação de conteúdo para catálogo e marketplaces.",
-              ]}
-            />
+          {/* Fluxo — numbered steps */}
+          <section className="py-6">
+            <div className="portal-card rounded-[1.6rem] px-6 py-6 md:px-8 md:py-8">
+              <p className="section-kicker">Fluxo</p>
+              <h3 className="mt-2 text-xl font-semibold text-slate-800">
+                O portal cuida do restante após o envio
+              </h3>
+
+              <ol className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {[
+                  { n: "01", title: "Validar",    desc: "Formato, integridade e dependências." },
+                  { n: "02", title: "Catalogar",  desc: "Versão nova sem sobrescrever arquivos." },
+                  { n: "03", title: "Converter",  desc: "Adaptação Bambu → Snapmaker com sanidade de parâmetros." },
+                  { n: "04", title: "Exportar",   desc: "Geração de arquivo final, previews e manifesto." },
+                  { n: "05", title: "Reportar",   desc: "Relatórios de diagnóstico e rastreabilidade." },
+                  { n: "06", title: "Publicar",   desc: "Conteúdo pronto para catálogo e marketplaces." },
+                ].map((step) => (
+                  <li key={step.n} className="flex gap-4">
+                    <span className="mt-0.5 shrink-0 font-mono text-2xl font-black leading-none text-slate-200">
+                      {step.n}
+                    </span>
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900">{step.title}</p>
+                      <p className="mt-1 text-sm leading-6 text-slate-500">{step.desc}</p>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          </section>
+
+          {/* Fila */}
+          <section className="py-2">
             <TopicCard
               title="Fila de processamento"
               points={[

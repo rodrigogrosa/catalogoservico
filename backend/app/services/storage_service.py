@@ -388,7 +388,7 @@ class StorageService:
             "updated_at": manifest.get("updated_at"),
             "preview_url": manifest.get("preview_url"),
             "printable_score": printable_score,
-            "sales_profile": None,
+            "sales_profile": manifest.get("sales_profile"),
         }
         return summary
 
