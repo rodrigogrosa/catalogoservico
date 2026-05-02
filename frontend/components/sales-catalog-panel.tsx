@@ -7,10 +7,13 @@ import { fileUrl, type ProjectSummary, type SalesProfile } from "@/lib/api";
 
 type Props = {
   items: ProjectSummary[];
+  onSyncRequest?: () => void;
+  syncing?: boolean;
 };
 
-export function SalesCatalogPanel({ items }: Props) {
+export function SalesCatalogPanel({ items, onSyncRequest, syncing }: Props) {
   const sellableItems = useMemo(() => items.filter((item) => item.sales_profile), [items]);
+  const missingCount = items.length - sellableItems.length;
 
   return (
     <div className="border-b border-slate-900/10 py-8">
@@ -22,12 +25,36 @@ export function SalesCatalogPanel({ items }: Props) {
             Cards simples para navegar rápido. Abra um produto para ver cadastro completo, preço e textos por canal.
           </p>
         </div>
-        <span className="pill">{sellableItems.length} produtos</span>
+        <div className="flex items-center gap-3">
+          <span className="pill">{sellableItems.length} produtos</span>
+          {onSyncRequest && missingCount > 0 && (
+            <button
+              type="button"
+              onClick={onSyncRequest}
+              disabled={syncing}
+              className="rounded-full border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-800 transition hover:bg-amber-100 disabled:opacity-50"
+            >
+              {syncing ? "Sincronizando…" : `Sincronizar fichas (${missingCount} sem ficha)`}
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="mt-6 divide-y divide-slate-900/10">
         {sellableItems.length === 0 ? (
-          <div className="py-6 text-base text-slate-600">Nenhum projeto com ficha comercial disponível ainda.</div>
+          <div className="py-6 text-base text-slate-600">
+            Nenhum projeto com ficha comercial disponível ainda.{" "}
+            {onSyncRequest && (
+              <button
+                type="button"
+                onClick={onSyncRequest}
+                disabled={syncing}
+                className="font-semibold text-amber-700 underline disabled:opacity-50"
+              >
+                {syncing ? "Sincronizando…" : "Gerar fichas agora"}
+              </button>
+            )}
+          </div>
         ) : (
           sellableItems.map((project) => <SalesProjectCard key={project.id} project={project} sales={project.sales_profile!} />)
         )}

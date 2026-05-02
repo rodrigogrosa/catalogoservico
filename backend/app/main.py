@@ -31,6 +31,24 @@ async def lifespan(application: FastAPI):  # noqa: ANN001
         ReviewerService().start_background_loop()
     except Exception as exc:  # noqa: BLE001
         logger.warning("reviewer_agent_startup_failed", extra={"error": str(exc)})
+
+    # Backfill sales_profile for any project that is missing it (idempotent, runs in background).
+    try:
+        import threading
+        from app.services.project_service import ProjectService
+
+        def _run_backfill() -> None:
+            try:
+                result = ProjectService().backfill_sales_profiles()
+                if result.get("fixed", 0) > 0:
+                    logger.info("startup_sales_profile_backfill", extra=result)
+            except Exception as exc2:  # noqa: BLE001
+                logger.warning("startup_sales_profile_backfill_failed", extra={"error": str(exc2)})
+
+        threading.Thread(target=_run_backfill, daemon=True, name="startup-backfill").start()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("startup_backfill_thread_failed", extra={"error": str(exc)})
+
     yield
     # Shutdown (nothing to clean up currently)
 

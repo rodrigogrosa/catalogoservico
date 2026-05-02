@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 
 import { AppShell } from "@/components/app-shell";
 import { useAuth } from "@/components/auth-provider";
@@ -9,10 +9,14 @@ import { ProjectList } from "@/components/project-list";
 import { SalesCatalogPanel } from "@/components/sales-catalog-panel";
 import { ProjectStatCard } from "@/components/project-stat-card";
 import { useProjects } from "@/hooks/use-projects";
+import { backfillCatalog } from "@/lib/api";
 import { PERMISSIONS } from "@/lib/permissions";
 import { buildProjectMetrics } from "@/lib/project-metrics";
 
 const PER_PAGE = 20;
+// Sales catalog always fetches the full list so every project with a sales_profile
+// is visible regardless of which page the "Acervo" tab is currently on.
+const SALES_PER_PAGE = 200;
 
 export default function CatalogPage() {
   const { can } = useAuth();
@@ -20,14 +24,39 @@ export default function CatalogPage() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [backfilling, setBackfilling] = useState(false);
+  const [backfillMsg, setBackfillMsg] = useState<string | null>(null);
 
+  // Paginated fetch for the "Acervo de projetos" tab.
   const { error, loading, projects, total, pages, refreshProjects } = useProjects({
     page,
     per_page: PER_PAGE,
     search: debouncedSearch || undefined,
   });
 
+  // Full-list fetch for the "Catálogo de venda" tab — independent of pagination.
+  const { projects: salesItems, loading: salesLoading, refreshProjects: refreshSales } = useProjects({
+    page: 1,
+    per_page: SALES_PER_PAGE,
+    search: debouncedSearch || undefined,
+  });
+
   const metrics = buildProjectMetrics(projects);
+
+  const handleBackfill = useCallback(async () => {
+    setBackfilling(true);
+    setBackfillMsg(null);
+    try {
+      const result = await backfillCatalog();
+      setBackfillMsg(`${result.fixed} ficha(s) gerada(s), ${result.skipped} já existiam.`);
+      void refreshSales();
+      void refreshProjects();
+    } catch {
+      setBackfillMsg("Erro ao sincronizar fichas. Tente novamente.");
+    } finally {
+      setBackfilling(false);
+    }
+  }, [refreshSales, refreshProjects]);
 
   function handleSearchChange(e: React.ChangeEvent<HTMLInputElement>) {
     setSearch(e.target.value);
@@ -101,10 +130,21 @@ export default function CatalogPage() {
           </div>
         </section>
 
-        {loading ? (
+        {loading && activeTab === "projects" ? (
           <div className="portal-card rounded-[1.6rem] px-6 py-6 text-base text-slate-700">Carregando catálogo...</div>
+        ) : salesLoading && activeTab === "sales" ? (
+          <div className="portal-card rounded-[1.6rem] px-6 py-6 text-base text-slate-700">Carregando vitrine de vendas...</div>
         ) : activeTab === "sales" ? (
-          <SalesCatalogPanel items={projects} />
+          <>
+            {backfillMsg && (
+              <p className="rounded-[1.35rem] border border-emerald-200 bg-emerald-50 px-5 py-3 text-sm text-emerald-800">{backfillMsg}</p>
+            )}
+            <SalesCatalogPanel
+              items={salesItems}
+              onSyncRequest={handleBackfill}
+              syncing={backfilling}
+            />
+          </>
         ) : (
           <ProjectList items={projects} onProjectDeleted={refreshProjects} />
         )}
