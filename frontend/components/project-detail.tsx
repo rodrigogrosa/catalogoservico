@@ -17,6 +17,8 @@ import {
   fileUrl,
   processProject,
   reprocessProject,
+  updateProject,
+  backfillCatalog,
   type ProcessPayload,
   type ProcessingStage,
   type ProjectCompareResponse,
@@ -39,12 +41,13 @@ const defaultPayload: ProcessPayload = {
   unit_mode: "auto",
   hollowing: false,
   objective_preset: "quality",
-  orientation_priority: "support_economy",
+  orientation_priority: "aesthetics",
   target_nozzle_mm: 0.4,
   supports: "auto",
+  target_material: "PLA",
   material_preferences: {
-    use_case: "unknown",
-    prioritize: "balanced",
+    use_case: "decorative",
+    prioritize: "aesthetics",
   },
   color_preferences: {
     preserve_original_colors: true,
@@ -113,6 +116,10 @@ export function ProjectDetailView({ project, section }: Props) {
   const [comparison, setComparison] = useState<ProjectCompareResponse | null>(null);
   const [bundlePath, setBundlePath] = useState<string | null>(null);
   const [printFilePath, setPrintFilePath] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editMaterial, setEditMaterial] = useState("");
+  const [isEditing, setIsEditing] = useState(false);
+  const [editMessage, setEditMessage] = useState<string | null>(null);
 
   const isProcessing = currentProject.status === "processing";
   const processStages = useMemo(
@@ -215,6 +222,39 @@ export function ProjectDetailView({ project, section }: Props) {
     }
   }
 
+  async function handleEditSave() {
+    setIsEditing(true);
+    setEditMessage(null);
+    try {
+      const updates: Record<string, string> = {};
+      if (editName.trim()) updates.name = editName.trim();
+      if (editMaterial.trim()) updates.target_material = editMaterial.trim().toUpperCase();
+      if (Object.keys(updates).length === 0) {
+        setEditMessage("Nenhuma alteração para salvar.");
+        return;
+      }
+      const updated = await updateProject(currentProject.id, updates);
+      setCurrentProject(updated);
+      setEditName("");
+      setEditMaterial("");
+      setEditMessage("Projeto atualizado com sucesso.");
+    } catch (error) {
+      setEditMessage(error instanceof Error ? error.message : "Falha ao atualizar projeto.");
+    } finally {
+      setIsEditing(false);
+    }
+  }
+
+  async function handleBackfillCatalog() {
+    setMessage(null);
+    try {
+      const result = await backfillCatalog();
+      setMessage(`Catálogo reprocessado: ${result.fixed} projetos atualizados, ${result.skipped} ignorados.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Falha ao reprocessar catálogo.");
+    }
+  }
+
   const meta = sectionMeta[section];
 
   return (
@@ -252,7 +292,20 @@ export function ProjectDetailView({ project, section }: Props) {
       {message ? <MessageBanner message={message} /> : null}
 
       {section === "overview" ? (
-        <OverviewSection project={currentProject} progressPercent={progressPercent} previewUrl={mainPreview} />
+        <OverviewSection
+          project={currentProject}
+          progressPercent={progressPercent}
+          previewUrl={mainPreview}
+          editName={editName}
+          setEditName={setEditName}
+          editMaterial={editMaterial}
+          setEditMaterial={setEditMaterial}
+          isEditing={isEditing}
+          editMessage={editMessage}
+          onEditSave={handleEditSave}
+          canProcess={can(PERMISSIONS.projectsProcess)}
+          onBackfillCatalog={handleBackfillCatalog}
+        />
       ) : null}
 
       {section === "process" ? (
@@ -331,13 +384,61 @@ function OverviewSection({
   project,
   progressPercent,
   previewUrl,
+  editName,
+  setEditName,
+  editMaterial,
+  setEditMaterial,
+  isEditing,
+  editMessage,
+  onEditSave,
+  canProcess,
+  onBackfillCatalog,
 }: {
   project: ProjectDetail;
   progressPercent: number;
   previewUrl: string | null;
+  editName: string;
+  setEditName: (v: string) => void;
+  editMaterial: string;
+  setEditMaterial: (v: string) => void;
+  isEditing: boolean;
+  editMessage: string | null;
+  onEditSave: () => Promise<void>;
+  canProcess: boolean;
+  onBackfillCatalog: () => Promise<void>;
 }) {
   return (
     <div className="space-y-6">
+      <SectionCard
+        kicker="Editar projeto"
+        title="Alterar informações"
+        description="Corrija o nome, o material alvo ou qualquer dado do projeto sem precisar reprocessar."
+      >
+        <div className="space-y-4">
+          <TextField
+            label="Nome do projeto"
+            placeholder={project.name}
+            value={editName}
+            onChange={setEditName}
+          />
+          <TextField
+            label="Material alvo"
+            placeholder={(project.metadata?.request_parameters as Record<string, unknown> | undefined)?.target_material as string ?? "Ex.: PLA, PETG, ASA"}
+            value={editMaterial}
+            onChange={setEditMaterial}
+          />
+          {editMessage ? <p className="text-sm text-orange-700">{editMessage}</p> : null}
+          <button
+            type="button"
+            onClick={() => void onEditSave()}
+            disabled={isEditing || !canProcess}
+            className="rounded-full bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-orange-700 disabled:opacity-50"
+          >
+            {isEditing ? "Salvando..." : "Salvar alterações"}
+          </button>
+        </div>
+      </SectionCard>
+
       <SectionCard
         kicker="Resumo"
         title="Situação atual do projeto"
@@ -368,6 +469,27 @@ function OverviewSection({
         ) : (
           <EmptyBlock text="Nenhuma prévia principal disponível ainda." />
         )}
+      </SectionCard>
+
+      <SectionCard
+        kicker="Catálogo"
+        title="Reprocessar catálogo de vendas"
+        description="Gera fichas comerciais para todos os projetos que ainda não têm anúncio."
+      >
+        <div className="space-y-3">
+          <p className="text-sm leading-6 text-slate-600">
+            Clique para varrer todos os projetos importados e gerar automaticamente os preços e textos de venda
+            para os que ainda não possuem ficha comercial.
+          </p>
+          <button
+            type="button"
+            onClick={() => void onBackfillCatalog()}
+            disabled={!canProcess}
+            className="rounded-full border border-slate-900/10 bg-white px-5 py-3 text-sm font-semibold text-slate-900 transition hover:bg-orange-700 hover:text-white disabled:opacity-50"
+          >
+            Reprocessar catálogo agora
+          </button>
+        </div>
       </SectionCard>
 
       <SectionCard

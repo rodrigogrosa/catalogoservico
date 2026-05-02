@@ -730,6 +730,32 @@ export async function deleteProject(id: string): Promise<void> {
   }
 }
 
+export type UpdateProjectPayload = {
+  name?: string;
+  target_material?: string;
+  request_parameters?: Record<string, unknown>;
+  sales_profile?: Record<string, unknown>;
+};
+
+export async function updateProject(id: string, payload: UpdateProjectPayload): Promise<ProjectDetail> {
+  const response = await apiFetchResilient(`/projects/${id}`, {
+    method: "PATCH",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw await parseApiError(response, "Falha ao atualizar projeto");
+  return response.json();
+}
+
+export async function backfillCatalog(): Promise<{ fixed: number; skipped: number; errors: string[] }> {
+  const response = await apiFetchResilient("/projects/backfill-catalog", {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  if (!response.ok) throw await parseApiError(response, "Falha ao reprocessar catálogo");
+  return response.json();
+}
+
 export async function processProject(id: string, payload: ProcessPayload): Promise<ProjectSummary> {
   const response = await apiFetchResilient(`/projects/${id}/process`, {
     method: "POST",

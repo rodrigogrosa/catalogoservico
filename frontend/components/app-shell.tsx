@@ -24,6 +24,7 @@ type Props = {
 
 const operationNavItems: NavItem[] = [
   { label: "Visão geral", href: "/", helper: "Comando executivo", permission: PERMISSIONS.dashboardView },
+  { label: "Sobre", href: "/about", helper: "Posicionamento e fluxo", permission: PERMISSIONS.dashboardView },
   { label: "Novo projeto", href: "/new-project", helper: "Entrada e importação", permission: PERMISSIONS.projectsCreate },
   { label: "Catálogo", href: "/catalog", helper: "Portfólio e vendas", permission: PERMISSIONS.catalogView },
   { label: "Fila", href: "/queue", helper: "Operação em andamento", permission: PERMISSIONS.queueView },

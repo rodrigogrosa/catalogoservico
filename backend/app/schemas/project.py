@@ -203,6 +203,13 @@ class ImportUrlRequest(BaseModel):
     project_name: str | None = None
 
 
+class UpdateProjectRequest(BaseModel):
+    name: str | None = None
+    target_material: str | None = None
+    request_parameters: dict[str, Any] | None = None
+    sales_profile: dict[str, Any] | None = None
+
+
 class MaterialPreferences(BaseModel):
     use_case: Literal["decorative", "functional", "structural", "unknown"] = "unknown"
     thermal_resistance: bool | None = None

@@ -14,6 +14,7 @@ from app.schemas.project import (
     ProjectDetailResponse,
     ProjectListResponse,
     ProjectSummary,
+    UpdateProjectRequest,
 )
 from app.services.dependencies import get_project_service
 from app.services.project_service import ProjectService
@@ -64,6 +65,29 @@ async def delete_project(
     if not deleted:
         raise HTTPException(status_code=404, detail="Projeto nao encontrado.")
     return {"status": "deleted", "project_id": project_id}
+
+
+@router.patch("/{project_id}", response_model=ProjectDetailResponse)
+async def update_project(
+    project_id: str,
+    payload: UpdateProjectRequest,
+    service: ProjectService = Depends(get_project_service),
+    current_user: AuthUser = Depends(require_permission("projects.process")),
+) -> ProjectDetailResponse:
+    logger.info("project_update_requested", extra={"username": current_user.username, "project_id": project_id})
+    result = service.update_project(project_id, payload.model_dump(exclude_none=True))
+    if result is None:
+        raise HTTPException(status_code=404, detail="Projeto nao encontrado.")
+    return result
+
+
+@router.post("/backfill-catalog", response_model=dict)
+async def backfill_catalog(
+    service: ProjectService = Depends(get_project_service),
+    current_user: AuthUser = Depends(require_permission("projects.process")),
+) -> dict:
+    logger.info("catalog_backfill_requested", extra={"username": current_user.username})
+    return service.backfill_sales_profiles()
 
 
 @router.post("/upload", response_model=ProjectDetailResponse)

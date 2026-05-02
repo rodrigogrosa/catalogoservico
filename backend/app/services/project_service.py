@@ -198,15 +198,21 @@ class ProjectService:
 
         now = datetime.now(tz=timezone.utc)
         previews = self.collect_previews(saved_files, layout["folders"]["previews"])
+
+        # Use embedded metadata name from the file itself (3MF project_settings / XML metadata)
+        # as a richer seed before the heuristic name cleaner runs.
+        file_meta_name = self.extract_file_metadata_name(saved_files)
+        name_seed = file_meta_name or project_name
+
         if origin_url:
             project_name = self.make_friendly_project_name(
-                project_name,
+                name_seed,
                 previews=previews,
                 source_url=origin_url,
                 allow_vision=False,
             )
         else:
-            project_name = self.make_friendly_project_name(project_name, previews=previews, allow_vision=False)
+            project_name = self.make_friendly_project_name(name_seed, previews=previews, allow_vision=False)
         preview_url = self.resolve_preview_url(previews, primary_source)
         try:
             slicer_hints: dict[str, Any] = self.slicer_validation.profile_service.load_profile().get("slicer_safe_defaults", {})
@@ -263,7 +269,7 @@ class ProjectService:
                 "snapmaker_profile": self.settings.snapmaker_profile_name,
                 "llm_runtime": self.local_llm.describe_runtime(),
                 "decision_log": [],
-                "request_parameters": {},
+                "request_parameters": self.infer_initial_parameters(project_name, detected, parser_result),
                 "limitations": parser_result.errors.copy(),
                 "user_answers": [],
                 "execution_snapshot": {},
@@ -339,6 +345,175 @@ class ProjectService:
             },
         )
         return ProjectDetailResponse(**manifest)
+
+    # ------------------------------------------------------------------
+    # Helpers: metadata extraction + smart defaults
+    # ------------------------------------------------------------------
+
+    def extract_file_metadata_name(self, saved_files: list[Path]) -> str | None:
+        """Return a human-readable name found inside the 3MF/ZIP file, or None."""
+        import zipfile, json as _json
+        from xml.etree import ElementTree as _ET
+
+        for file_path in saved_files:
+            if file_path.suffix.lower() not in {".3mf", ".zip"}:
+                continue
+            if not zipfile.is_zipfile(file_path):
+                continue
+            try:
+                with zipfile.ZipFile(file_path) as archive:
+                    names = archive.namelist()
+                    # 1. Bambu/Orca project_settings.config
+                    if "Metadata/project_settings.config" in names:
+                        try:
+                            settings = _json.loads(archive.read("Metadata/project_settings.config").decode("utf-8"))
+                            title = str(settings.get("project_name") or "").strip()
+                            if title and title.lower() not in {"", "auto", "project", "untitled"}:
+                                return title
+                        except Exception:
+                            pass
+                    # 2. model.model root element metadata
+                    model_entry = next((n for n in names if n.lower().endswith("/3dmodel.model") or n == "3D/3dmodel.model"), None)
+                    if model_entry:
+                        try:
+                            raw_xml = archive.read(model_entry)
+                            if len(raw_xml) < 2 * 1024 * 1024:  # only parse if < 2 MB
+                                root = _ET.fromstring(raw_xml)
+                                ns = {"m": "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"}
+                                for meta in root.findall(".//m:metadata", ns) + root.findall(".//metadata"):
+                                    meta_name = (meta.get("name") or "").lower()
+                                    if meta_name in {"title", "name", "object_name", "model_name"}:
+                                        title = (meta.text or "").strip()
+                                        if title:
+                                            return title
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+        return None
+
+    _DECORATIVE_KEYWORDS = frozenset(
+        "boneco figura estatua decoracao decorativo estatueta mascara capacete chibi bust stand keychain chaveiro mini".split()
+    )
+    _FUNCTIONAL_KEYWORDS = frozenset(
+        "suporte holder bracket mount enclosure caixa support fixador clip gancho functional parte organizer engrenagem".split()
+    )
+
+    def infer_initial_parameters(
+        self,
+        project_name: str,
+        detected: dict[str, Any],
+        parser_result: Any,
+    ) -> dict[str, Any]:
+        """Derive smart process defaults from upload signals so the UI comes pre-filled."""
+        from app.schemas.project import ProcessProjectRequest, MaterialPreferences, ColorPreferences, HollowingPreferences, TransformPreferences
+
+        name_lower = project_name.lower()
+        ecosystem = str(detected.get("source_ecosystem", "generic")).lower()
+        extension = str(detected.get("extension", "unknown")).lower()
+
+        # Detect use-case from name keywords
+        has_decorative = any(kw in name_lower for kw in self._DECORATIVE_KEYWORDS)
+        has_functional = any(kw in name_lower for kw in self._FUNCTIONAL_KEYWORDS)
+
+        if has_functional and not has_decorative:
+            use_case = "functional"
+            orientation = "support_economy"
+            preset = "functional_part"
+        elif has_decorative or not has_functional:
+            use_case = "decorative"
+            orientation = "aesthetics"
+            preset = "quality"
+        else:
+            use_case = "decorative"
+            orientation = "aesthetics"
+            preset = "quality"
+
+        # Infer material from name
+        material = "PLA"
+        for mat in ("PETG", "ASA", "ABS", "TPU", "PA-CF", "PLA"):
+            if mat.lower() in name_lower:
+                material = mat
+                break
+
+        # Bambu projects are typically decorative/character and need conversion
+        convert_bambu = ecosystem == "bambu_lab"
+
+        params = ProcessProjectRequest(
+            repair_mesh=True,
+            adapt_to_snapmaker=True,
+            convert_from_bambu=convert_bambu,
+            scale_mode="keep",
+            unit_mode="auto",
+            hollowing=False,
+            supports="auto",
+            target_material=material,
+            objective_preset=preset,
+            orientation_priority=orientation,
+            target_nozzle_mm=0.4,
+            material_preferences=MaterialPreferences(use_case=use_case, prioritize="aesthetics" if use_case == "decorative" else "balanced"),
+            color_preferences=ColorPreferences(),
+            hollowing_preferences=HollowingPreferences(),
+            transform_preferences=TransformPreferences(),
+        )
+        return params.model_dump(mode="json")
+
+    # ------------------------------------------------------------------
+    # Edit project
+    # ------------------------------------------------------------------
+
+    def update_project(self, project_id: str, updates: dict[str, Any]) -> ProjectDetailResponse | None:
+        manifest = self.storage.load_manifest(project_id)
+        if manifest is None:
+            return None
+        now = datetime.now(tz=timezone.utc).isoformat()
+        if "name" in updates and updates["name"]:
+            manifest["name"] = str(updates["name"]).strip()
+        if "request_parameters" in updates and isinstance(updates["request_parameters"], dict):
+            manifest.setdefault("metadata", {})
+            manifest["metadata"]["request_parameters"] = updates["request_parameters"]
+            # Also sync target_material from request_parameters into sales_profile context
+        if "target_material" in updates and updates["target_material"] is not None:
+            manifest.setdefault("metadata", {})
+            rp = manifest["metadata"].get("request_parameters") or {}
+            rp["target_material"] = str(updates["target_material"]).strip().upper()
+            manifest["metadata"]["request_parameters"] = rp
+        if "sales_profile" in updates and isinstance(updates["sales_profile"], dict):
+            manifest["sales_profile"] = updates["sales_profile"]
+        manifest["updated_at"] = now
+        self.storage.save_manifest(manifest)
+        return ProjectDetailResponse(**manifest)
+
+    # ------------------------------------------------------------------
+    # Backfill: generate sales_profile for all existing projects
+    # ------------------------------------------------------------------
+
+    def backfill_sales_profiles(self) -> dict[str, Any]:
+        all_manifests = self.storage.list_manifests()
+        fixed = 0
+        skipped = 0
+        errors_list: list[str] = []
+        for summary in all_manifests:
+            project_id = summary.get("id")
+            if not project_id:
+                skipped += 1
+                continue
+            if summary.get("sales_profile") and isinstance(summary["sales_profile"], dict):
+                skipped += 1
+                continue
+            try:
+                manifest = self.storage.load_manifest(project_id)
+                if manifest is None:
+                    skipped += 1
+                    continue
+                manifest["sales_profile"] = self.sales_service.build_sales_profile(manifest, allow_llm=False)
+                manifest["updated_at"] = datetime.now(tz=timezone.utc).isoformat()
+                self.storage.save_manifest(manifest)
+                fixed += 1
+            except Exception as exc:  # noqa: BLE001
+                errors_list.append(f"{project_id}: {exc}")
+                skipped += 1
+        return {"fixed": fixed, "skipped": skipped, "errors": errors_list}
 
     def make_friendly_project_name(
         self,
