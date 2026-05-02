@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import base64
 import json
+import time
 from pathlib import Path
 from typing import Any
 
 import httpx
 
 from app.core.config import Settings, get_settings
+
+_RUNTIME_CACHE_TTL = 60.0  # seconds between Ollama availability probes
 
 
 class LocalLlmService:
@@ -17,6 +20,8 @@ class LocalLlmService:
         self.client = client or httpx.Client(
             timeout=httpx.Timeout(timeout_seconds, connect=3.0, read=timeout_seconds, write=10.0, pool=5.0)
         )
+        self._runtime_cache: dict[str, Any] | None = None
+        self._runtime_cache_at: float = 0.0
 
     def is_enabled(self) -> bool:
         return self.settings.ollama_enabled
@@ -48,7 +53,14 @@ class LocalLlmService:
         return self.has_model(self.settings.ollama_vision_model)
 
     def describe_runtime(self) -> dict[str, Any]:
-        return {
+        # Cache the result for _RUNTIME_CACHE_TTL seconds so repeated calls
+        # during upload processing don't each make 2 blocking HTTP requests to
+        # Ollama (is_available + is_vision_available), which could add up to
+        # 30 s of latency per upload when Ollama is unreachable.
+        now = time.monotonic()
+        if self._runtime_cache is not None and (now - self._runtime_cache_at) < _RUNTIME_CACHE_TTL:
+            return self._runtime_cache
+        result = {
             "enabled": self.is_enabled(),
             "available": self.is_available(),
             "base_url": self.settings.ollama_base_url,
@@ -56,6 +68,9 @@ class LocalLlmService:
             "vision_model": self.settings.ollama_vision_model,
             "vision_available": self.is_vision_available(),
         }
+        self._runtime_cache = result
+        self._runtime_cache_at = now
+        return result
 
     def generate_json(
         self,

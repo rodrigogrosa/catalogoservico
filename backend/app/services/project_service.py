@@ -208,6 +208,11 @@ class ProjectService:
         else:
             project_name = self.make_friendly_project_name(project_name, previews=previews, allow_vision=False)
         preview_url = self.resolve_preview_url(previews, primary_source)
+        try:
+            slicer_hints: dict[str, Any] = self.slicer_validation.profile_service.load_profile().get("slicer_safe_defaults", {})
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("upload_slicer_hints_failed", extra={"project_name": project_name, "error": str(exc)})
+            slicer_hints = {}
         manifest = {
             "id": layout["version_name"],
             "name": project_name,
@@ -266,7 +271,7 @@ class ProjectService:
                 # Slicer safe-defaults: embedded on every import so the user
                 # (and the process pipeline) always has the recommended settings
                 # pre-computed from the Snapmaker U1 profile.
-                "slicer_hints": self.slicer_validation.profile_service.load_profile().get("slicer_safe_defaults", {}),
+                "slicer_hints": slicer_hints,
             },
             "processing_stages": self.build_initial_stages(now),
             "stage_metrics": [],
@@ -291,7 +296,11 @@ class ProjectService:
         #      upload time: name, size, format, ecosystem). AI copy upgrade happens in background.
         #   2. build_manifest/write_manifest — formal Snapmaker manifest JSON (large write)
         #   3. second save_manifest — only needed after #2 completes
-        manifest["sales_profile"] = self.sales_service.build_sales_profile(manifest, allow_llm=False)
+        try:
+            manifest["sales_profile"] = self.sales_service.build_sales_profile(manifest, allow_llm=False)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("upload_sales_profile_build_failed", extra={"project_name": project_name, "error": str(exc)})
+            manifest["sales_profile"] = None
         manifest["logs"] = [{"label": "processing.log", "path": self.storage.to_storage_url(layout["folders"]["logs"] / "processing.log"), "kind": "log"}]
         self.storage.save_manifest(manifest)
         self.append_log(layout["folders"]["logs"], "Projeto criado e análise inicial concluída.")
