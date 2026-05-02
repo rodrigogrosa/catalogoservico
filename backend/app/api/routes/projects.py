@@ -1,9 +1,11 @@
 import asyncio
+import json
 import logging
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import StreamingResponse
 
-from app.core.auth import require_permission
+from app.core.auth import require_current_user_or_query_token, require_permission
 from app.schemas.auth import AuthUser
 from app.schemas.project import (
     ImportUrlRequest,
@@ -88,6 +90,34 @@ async def backfill_catalog(
 ) -> dict:
     logger.info("catalog_backfill_requested", extra={"username": current_user.username})
     return service.backfill_sales_profiles()
+
+
+@router.get("/{project_id}/progress")
+async def stream_project_progress(
+    project_id: str,
+    service: ProjectService = Depends(get_project_service),
+    current_user: AuthUser = Depends(require_current_user_or_query_token),
+) -> StreamingResponse:
+    """SSE endpoint that streams processing progress for a project.
+
+    Token can be passed as ?token= query param because EventSource (browser)
+    does not support custom headers.
+    """
+    from app.services.project_service import _progress_store
+
+    async def generate():
+        for _ in range(600):  # max 5 minutes at 0.5s intervals
+            data = _progress_store.get(project_id, {})
+            yield f"data: {json.dumps(data)}\n\n"
+            if data.get("done"):
+                break
+            await asyncio.sleep(0.5)
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.post("/upload", response_model=ProjectDetailResponse)

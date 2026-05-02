@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 
-import { importProjectFromUrl, uploadProject, type ProjectDetail } from "@/lib/api";
+import { importProjectFromUrl, uploadProjectWithProgress, type ProjectDetail } from "@/lib/api";
 
 type Props = {
   onUploaded: (project?: ProjectDetail) => Promise<void> | void;
@@ -17,6 +17,8 @@ export function UploadDropzone({ onUploaded, compact = false }: Props) {
   const [projectUrl, setProjectUrl] = useState("");
   const [dragActive, setDragActive] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const [uploadPhase, setUploadPhase] = useState<"upload" | "processing" | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -25,8 +27,21 @@ export function UploadDropzone({ onUploaded, compact = false }: Props) {
     if (incoming.length === 0) return;
     setError(null);
     setIsUploading(true);
+    setUploadProgress(0);
+    setUploadPhase("upload");
     try {
-      const project = await uploadProject(incoming, projectName || undefined);
+      const project = await uploadProjectWithProgress(
+        incoming,
+        projectName || undefined,
+        (pct) => {
+          setUploadProgress(pct);
+          setUploadPhase("upload");
+        },
+        () => {
+          setUploadProgress(100);
+          setUploadPhase("processing");
+        },
+      );
       setProjectName("");
       if (inputRef.current) inputRef.current.value = "";
       await onUploaded(project);
@@ -34,6 +49,8 @@ export function UploadDropzone({ onUploaded, compact = false }: Props) {
       setError(uploadError instanceof Error ? uploadError.message : "Falha no upload.");
     } finally {
       setIsUploading(false);
+      setUploadProgress(null);
+      setUploadPhase(null);
     }
   }
 
@@ -96,8 +113,25 @@ export function UploadDropzone({ onUploaded, compact = false }: Props) {
               </p>
             </div>
             {isUploading || isImporting ? (
-              <div className="rounded-2xl border border-orange-500/20 bg-orange-500/10 px-4 py-3 text-sm font-semibold text-orange-900">
-                {isImporting ? "Importando link..." : "Enviando arquivo..."}
+              <div className="min-w-[220px]">
+                {isUploading && uploadProgress !== null ? (
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-sm font-semibold text-orange-900">
+                      <span>{uploadPhase === "processing" ? "Servidor processando..." : "Enviando arquivo..."}</span>
+                      {uploadPhase === "upload" && <span>{uploadProgress}%</span>}
+                    </div>
+                    <div className="h-2.5 w-full overflow-hidden rounded-full bg-orange-100">
+                      <div
+                        className={`h-full rounded-full transition-all duration-300 ${uploadPhase === "processing" ? "w-full animate-pulse bg-orange-400" : "bg-orange-500"}`}
+                        style={uploadPhase === "upload" ? { width: `${uploadProgress}%` } : undefined}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-orange-500/20 bg-orange-500/10 px-4 py-3 text-sm font-semibold text-orange-900">
+                    {isImporting ? "Importando link..." : "Enviando arquivo..."}
+                  </div>
+                )}
               </div>
             ) : null}
           </div>

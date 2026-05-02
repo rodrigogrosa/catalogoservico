@@ -17,6 +17,7 @@ import {
   fileUrl,
   processProject,
   reprocessProject,
+  subscribeToProjectProgress,
   updateProject,
   backfillCatalog,
   type ProcessPayload,
@@ -120,6 +121,7 @@ export function ProjectDetailView({ project, section }: Props) {
   const [editMaterial, setEditMaterial] = useState("");
   const [isEditing, setIsEditing] = useState(false);
   const [editMessage, setEditMessage] = useState<string | null>(null);
+  const [sseProgress, setSseProgress] = useState<{ pct: number; message: string } | null>(null);
 
   const isProcessing = currentProject.status === "processing";
   const processStages = useMemo(
@@ -147,15 +149,27 @@ export function ProjectDetailView({ project, section }: Props) {
 
   useEffect(() => {
     if (!isProcessing) return;
+    // Poll for project status updates (catches done/completed state).
     const timer = window.setInterval(async () => {
       try {
         const nextProject = await fetchProject(currentProject.id);
         setCurrentProject(nextProject);
+        if (nextProject.status !== "processing") {
+          setSseProgress(null);
+        }
       } catch {
         // noop
       }
-    }, 3000);
-    return () => window.clearInterval(timer);
+    }, 2000);
+    // Subscribe to SSE progress stream for real-time per-stage updates.
+    const unsubscribe = subscribeToProjectProgress(currentProject.id, (data) => {
+      setSseProgress({ pct: data.pct, message: data.message });
+      if (data.done) setSseProgress(null);
+    });
+    return () => {
+      window.clearInterval(timer);
+      unsubscribe();
+    };
   }, [currentProject.id, isProcessing]);
 
   async function handleProcess() {
@@ -272,8 +286,22 @@ export function ProjectDetailView({ project, section }: Props) {
             <StatusBadge status={currentProject.status} />
           </div>
 
+          {isProcessing && sseProgress ? (
+            <div className="rounded-2xl border border-orange-200 bg-orange-50 px-5 py-4 space-y-2">
+              <div className="flex items-center justify-between text-sm font-semibold text-orange-900">
+                <span>{sseProgress.message}</span>
+                <span>{sseProgress.pct}%</span>
+              </div>
+              <div className="h-3 w-full overflow-hidden rounded-full bg-orange-100">
+                <div
+                  className="h-full rounded-full bg-orange-500 transition-all duration-500"
+                  style={{ width: `${sseProgress.pct}%` }}
+                />
+              </div>
+            </div>
+          ) : null}
           <div className="grid gap-3 border-t border-slate-900/8 pt-5 md:grid-cols-4">
-            <MetricLine label="Progresso" value={`${progressPercent}%`} />
+            <MetricLine label="Progresso" value={`${sseProgress ? sseProgress.pct : progressPercent}%`} />
             <MetricLine label="Etapas concluídas" value={`${completedStages}/${processStages.length || 0}`} />
             <MetricLine label="Risco" value={currentProject.printable_score?.level ?? "medium"} />
             <MetricLine label="Bloqueios" value={String(currentProject.blocking_questions.length)} />

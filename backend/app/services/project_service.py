@@ -49,6 +49,11 @@ DIRECT_PROJECT_SUFFIXES = {".3mf", ".stl", ".obj", ".step", ".stp", ".amf", ".zi
 PRINTABLE_ARTIFACT_SUFFIXES = (".gcode", ".3mf", ".stl", ".obj", ".amf", ".step", ".stp")
 PRINTABLE_ARTIFACT_PRIORITIES = {".gcode": 0, ".3mf": 1, ".stl": 2, ".obj": 3, ".amf": 4, ".step": 5, ".stp": 6}
 
+# Module-level progress store: project_id → {pct, message, done}
+# Written by background processing threads, read by the SSE endpoint.
+_progress_store: dict[str, dict[str, Any]] = {}
+
+
 class ProjectService:
     def __init__(self) -> None:
         self.settings = get_settings()
@@ -72,6 +77,14 @@ class ProjectService:
         self.bundle_service = BundleService()
         self._processing_locks: dict[str, threading.Lock] = {}
         self._processing_locks_guard = threading.Lock()
+
+    # ── Progress tracking ────────────────────────────────────────────────────
+
+    def _emit_progress(self, project_id: str, pct: int, message: str, *, done: bool = False) -> None:
+        """Update the module-level progress store for streaming to the SSE endpoint."""
+        _progress_store[project_id] = {"pct": pct, "message": message, "done": done}
+
+    # ── Project creation ─────────────────────────────────────────────────────
 
     async def create_project(
         self,
@@ -861,12 +874,14 @@ class ProjectService:
         }
 
         try:
+            self._emit_progress(project_id, 5, "Iniciando processamento...")
             manifest["status"] = "processing"
             manifest["updated_at"] = datetime.now(tz=timezone.utc).isoformat()
             manifest["requested_actions"] = self.build_requested_actions(request)
             manifest.setdefault("metadata", {})
             manifest["metadata"]["request_parameters"] = request.model_dump(mode="json")
 
+            self._emit_progress(project_id, 10, "Analisando arquivos de entrada...")
             original_files = sorted(file_path for file_path in folders["original"].iterdir() if file_path.is_file())
             source_file = self.select_primary_input(original_files)
             detected = self.format_service.detect_group(original_files)
@@ -894,6 +909,7 @@ class ProjectService:
             manifest["processing_stages"] = self.build_processing_stages(context)
             self.storage.save_manifest(manifest)
             stage_timers: dict[str, Any] = {}
+            total_stages = max(1, len(manifest["processing_stages"]))
 
             def update_stage(stage_key: str, stage_label: str, stage_status: str, message: str | None = None) -> None:
                 if stage_status == "in_progress":
@@ -907,7 +923,15 @@ class ProjectService:
                 self.storage.save_manifest(manifest)
                 if message:
                     self.append_log(folders["logs"], f"[{stage_key}] {message}", stage_key=stage_key, status=stage_status)
+                # Emit real-time progress: stages account for 20-75% of the bar
+                completed = sum(
+                    1 for s in manifest.get("processing_stages", [])
+                    if s.get("status") in ("completed", "skipped", "failed")
+                )
+                stage_pct = 20 + int((completed / total_stages) * 55)
+                self._emit_progress(project_id, stage_pct, stage_label or "Processando...")
 
+            self._emit_progress(project_id, 20, "Executando pipeline de processamento...")
             try:
                 outputs = await asyncio.wait_for(
                     asyncio.to_thread(self.orchestrator.run, context, update_stage),
@@ -939,6 +963,7 @@ class ProjectService:
             flattened_risks = [item for output in outputs for item in output["riscos"]]
             pending_questions = self.normalize_questions([item for output in outputs for item in output["perguntas_ao_usuario"]])
             blocking_questions = [question for question in pending_questions if question["kind"] == "blocking"]
+            self._emit_progress(project_id, 78, "Gerando relatórios...")
             update_stage("reports", "Geração de relatórios", "in_progress", "Consolidando artefatos e preparando relatórios.")
             generated_artifacts = self.collect_generated_artifacts(outputs)
             preview_assets = self.collect_previews_fast(folders["previews"])
@@ -977,6 +1002,7 @@ class ProjectService:
 
             context["report_artifacts"] = report_artifacts
             context["pending_questions"] = pending_questions
+            self._emit_progress(project_id, 88, "Validação técnica final...")
             update_stage("qa", "Validação final", "in_progress", "Executando validação técnica final.")
             qa_result = self.qa_agent.run(context)
             update_stage("qa", "Validação final", "completed", "Validação final concluída.")
@@ -1021,8 +1047,11 @@ class ProjectService:
             manifest["manifest"] = formal_manifest
             manifest["has_project_manifest"] = True
             self.storage.save_manifest(manifest)
-            self.append_log(folders["logs"], f"Processamento concluído com status {manifest['status']}.", stage_key="project", status=manifest["status"])
-            logger.info("Projeto %s processado com status %s", project_id, manifest["status"])
+            final_status = manifest["status"]
+            done_msg = "Processamento concluído com sucesso!" if final_status == "completed" else "Processamento finalizado — aguardando respostas."
+            self._emit_progress(project_id, 100, done_msg, done=True)
+            self.append_log(folders["logs"], f"Processamento concluído com status {final_status}.", stage_key="project", status=final_status)
+            logger.info("Projeto %s processado com status %s", project_id, final_status)
         except Exception as exc:  # noqa: BLE001
             manifest["status"] = "failed"
             manifest["updated_at"] = datetime.now(tz=timezone.utc).isoformat()
@@ -1034,6 +1063,7 @@ class ProjectService:
                 "failed",
                 f"O pipeline abortou por exceção interna: {exc}",
             )
+            self._emit_progress(project_id, 100, f"Falha: {exc}", done=True)
             self.storage.save_manifest(manifest)
             self.append_log(
                 folders["logs"],

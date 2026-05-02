@@ -705,6 +705,91 @@ export async function uploadProject(files: File[], projectName?: string): Promis
   return response.json();
 }
 
+/**
+ * Upload files with real-time XHR progress events.
+ * onProgress(0-100) is called for network upload progress.
+ * onProcessing() is called when the network transfer finishes and the backend is processing.
+ */
+export function uploadProjectWithProgress(
+  files: File[],
+  projectName: string | undefined,
+  onProgress: (pct: number) => void,
+  onProcessing?: () => void,
+): Promise<ProjectDetail> {
+  return new Promise((resolve, reject) => {
+    const form = new FormData();
+    files.forEach((f) => form.append("files", f));
+    if (projectName) form.append("project_name", projectName);
+
+    const url = `${apiBase()}/projects/upload`;
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", url);
+
+    const headers = authHeaders();
+    for (const [key, value] of Object.entries(headers)) {
+      xhr.setRequestHeader(key, value);
+    }
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        const pct = Math.min(99, Math.round((e.loaded / e.total) * 100));
+        onProgress(pct);
+        if (pct >= 99 && onProcessing) onProcessing();
+      }
+    };
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          resolve(JSON.parse(xhr.responseText) as ProjectDetail);
+        } catch {
+          reject(new Error("Resposta inválida do servidor."));
+        }
+      } else {
+        try {
+          const body = JSON.parse(xhr.responseText) as { detail?: string };
+          reject(new Error(body.detail ?? `Erro HTTP ${xhr.status}`));
+        } catch {
+          reject(new Error(`Falha ao subir arquivo (HTTP ${xhr.status})`));
+        }
+      }
+    };
+
+    xhr.onerror = () => reject(new Error("Erro de rede durante o upload."));
+    xhr.ontimeout = () => reject(new Error("Tempo esgotado durante o upload."));
+    xhr.timeout = 10 * 60 * 1000; // 10 minutes
+
+    xhr.send(form);
+  });
+}
+
+/**
+ * Subscribe to real-time processing progress via SSE.
+ * Returns an unsubscribe function. Token is passed as query param because
+ * EventSource does not support custom headers.
+ */
+export function subscribeToProjectProgress(
+  id: string,
+  onUpdate: (data: { pct: number; message: string; done: boolean }) => void,
+): () => void {
+  if (typeof window === "undefined") return () => undefined;
+  const token = getStoredAuthToken();
+  const base = apiBase();
+  const qs = token ? `?token=${encodeURIComponent(token)}` : "";
+  const source = new EventSource(`${base}/projects/${id}/progress${qs}`);
+  source.onmessage = (e) => {
+    try {
+      const data = JSON.parse(e.data as string) as { pct: number; message: string; done: boolean };
+      onUpdate(data);
+      if (data.done) source.close();
+    } catch {
+      // ignore malformed frames
+    }
+  };
+  source.onerror = () => source.close();
+  return () => source.close();
+}
+
 export async function importProjectFromUrl(url: string, projectName?: string): Promise<ProjectDetail> {
   const response = await apiFetchResilient("/projects/import-url", {
     method: "POST",
