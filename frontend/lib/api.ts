@@ -1095,3 +1095,123 @@ export async function buildPublicationDraft(
   if (!response.ok) throw await parseApiError(response, "Falha ao gerar rascunho de publicação.");
   return response.json();
 }
+
+// ── System: Reviewer Agent ────────────────────────────────────────────────────
+
+export type ReviewFinding = {
+  severity: "critical" | "high" | "medium" | "low";
+  category: "error" | "performance" | "scalability" | "test" | "quality" | "security";
+  title: string;
+  detail: string;
+  suggestion: string;
+  source?: string;
+};
+
+export type ReviewReport = {
+  started_at: string | null;
+  completed_at: string | null;
+  provider: string;
+  health_score: number | null;
+  summary: string;
+  findings: ReviewFinding[];
+  priority_actions: string[];
+  auto_fixes_applied: string[];
+  raw_stats: Record<string, unknown>;
+};
+
+export async function fetchReviewReport(): Promise<ReviewReport> {
+  const response = await apiFetchResilient("/system/review", { cache: "no-store", headers: authHeaders() });
+  if (!response.ok) throw await parseApiError(response, "Falha ao buscar relatório de revisão.");
+  return response.json();
+}
+
+export async function triggerReview(): Promise<{ status: string; message: string }> {
+  const response = await apiFetchResilient("/system/review/run", {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  if (!response.ok) throw await parseApiError(response, "Falha ao iniciar revisão.");
+  return response.json();
+}
+
+export async function triggerReviewSync(): Promise<ReviewReport> {
+  const response = await apiFetchResilient("/system/review/run-sync", {
+    method: "POST",
+    headers: authHeaders(),
+  }, 90_000);
+  if (!response.ok) throw await parseApiError(response, "Falha ao executar revisão síncrona.");
+  return response.json();
+}
+
+// ── System: QA Suite Agent ───────────────────────────────────────────────────
+
+export type QaLayerResult = {
+  name: string;
+  status: "passed" | "failed" | "error" | "skipped";
+  duration_ms: number;
+  passed: number;
+  failed: number;
+  error?: string;
+  output?: string;
+  checks?: { label: string; ok: boolean; error?: string; status_code?: number }[];
+};
+
+export type QaSuiteResult = {
+  started_at?: string;
+  completed_at?: string;
+  overall_status: "passed" | "failed" | "never_run" | string;
+  total_duration_ms: number;
+  layers: QaLayerResult[];
+};
+
+export async function fetchQaSuiteResult(): Promise<QaSuiteResult> {
+  const response = await apiFetchResilient("/system/qa-suite", { cache: "no-store", headers: authHeaders() });
+  if (!response.ok) throw await parseApiError(response, "Falha ao buscar resultado do QA Suite.");
+  return response.json();
+}
+
+export async function triggerQaSuite(layers?: string[]): Promise<{ status: string; message: string }> {
+  const params = layers && layers.length > 0 ? `?layers=${layers.join("&layers=")}` : "";
+  const response = await apiFetchResilient(`/system/qa-suite/run${params}`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  if (!response.ok) throw await parseApiError(response, "Falha ao iniciar QA Suite.");
+  return response.json();
+}
+
+export async function runQaSuiteSync(layers?: string[]): Promise<QaSuiteResult> {
+  const params = layers && layers.length > 0 ? `?layers=${layers.join("&layers=")}` : "";
+  const response = await apiFetchResilient(`/system/qa-suite/run-sync${params}`, {
+    method: "POST",
+    headers: authHeaders(),
+  }, 360_000);
+  if (!response.ok) throw await parseApiError(response, "Falha ao executar QA Suite.");
+  return response.json();
+}
+
+export function subscribeToQaSuiteStream(onLine: (line: string) => void, onDone: (result: QaSuiteResult) => void): () => void {
+  const token = getStoredAuthToken();
+  const url = `${apiBase()}/system/qa-suite/stream${token ? `?token=${encodeURIComponent(token)}` : ""}`;
+  const source = new EventSource(url);
+
+  source.onmessage = (event) => {
+    try {
+      const msg = JSON.parse(event.data as string) as { type: string; line?: string; result?: QaSuiteResult };
+      if (msg.type === "output" && msg.line) {
+        onLine(msg.line);
+      } else if (msg.type === "done" && msg.result) {
+        onDone(msg.result);
+        source.close();
+      }
+    } catch {
+      // ignore parse errors
+    }
+  };
+
+  source.onerror = () => {
+    source.close();
+  };
+
+  return () => source.close();
+}

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+from contextlib import asynccontextmanager
 from time import perf_counter
 from uuid import uuid4
 
@@ -21,10 +22,24 @@ settings = get_settings()
 configure_logging()
 logger = logging.getLogger("app.http")
 
+
+@asynccontextmanager
+async def lifespan(application: FastAPI):  # noqa: ANN001
+    # Startup
+    try:
+        from app.services.reviewer_service import ReviewerService
+        ReviewerService().start_background_loop()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("reviewer_agent_startup_failed", extra={"error": str(exc)})
+    yield
+    # Shutdown (nothing to clean up currently)
+
+
 app = FastAPI(
     title="SnapMaker3d Studio API",
     version="0.1.0",
     description="Backend para análise, conversão e preparação de projetos 3D para Snapmaker.",
+    lifespan=lifespan,
 )
 
 app.add_middleware(

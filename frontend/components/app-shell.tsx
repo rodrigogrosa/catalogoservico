@@ -36,6 +36,8 @@ const configNavItems: NavItem[] = [
   { label: "Login social", href: "/social-login", helper: "Acesso e identidade", permission: PERMISSIONS.socialLoginView },
   { label: "Provedores IA", href: "/ai-settings", helper: "Fallback externo", permission: PERMISSIONS.aiSettingsView },
   { label: "Usuários", href: "/users", helper: "Perfis e acessos", permission: PERMISSIONS.usersView },
+  { label: "Revisor", href: "/review", helper: "Saúde e qualidade", permission: PERMISSIONS.usersView },
+  { label: "QA Suite", href: "/qa-suite", helper: "Testes automatizados", permission: PERMISSIONS.usersView },
 ];
 
 export function AppShell({ children, active = "Visão geral", title = "Portal EuAchei3D", subtitle }: Props) {
