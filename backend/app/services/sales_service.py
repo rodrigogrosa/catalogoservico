@@ -124,10 +124,15 @@ bullet_points deve ter no maximo 5 itens. hashtags deve ter no maximo 10 itens.
             self._market_reference_note(category_key),
         ]
         commerce_content = self._commerce_content(project_name, material, manifest, category_key, suggested_price, allow_llm=allow_llm)
+        sku = self._generate_sku(manifest)
 
         return {
             "pricing_version": self.PRICING_VERSION,
             "copy_source": commerce_content.get("copy_source", "deterministic"),
+            "sku": sku,
+            "default_stock": 100,
+            "warranty": {"type": "seller", "duration": 1, "unit": "months", "label": "1 mês — garantia do vendedor"},
+            "variations": self._default_variations(sku, suggested_price),
             "estimated_material_g": round(estimated_material_g, 1),
             "estimated_print_hours": round(estimated_print_hours, 1),
             "estimated_base_cost_brl": round(base_cost, 2),
@@ -138,7 +143,7 @@ bullet_points deve ter no maximo 5 itens. hashtags deve ter no maximo 10 itens.
             "currency": "BRL",
             "assumptions": assumptions,
             "sales_tips": self._sales_tips(project_name, material, manifest),
-            "marketplace_attributes": self._marketplace_attributes(project_name, material, manifest, commerce_content),
+            "marketplace_attributes": self._marketplace_attributes(project_name, material, manifest, commerce_content, sku),
         }
 
     def _infer_material(self, manifest: dict[str, Any]) -> str:
@@ -156,6 +161,45 @@ bullet_points deve ter no maximo 5 itens. hashtags deve ter no maximo 10 itens.
         if "tpu" in name:
             return "TPU"
         return "PLA"
+
+    # ------------------------------------------------------------------
+    # SKU + Variations + Warranty helpers
+    # ------------------------------------------------------------------
+
+    def _generate_sku(self, manifest: dict[str, Any]) -> str:
+        """Generate a deterministic SKU from the project slug/id."""
+        import re
+        slug = str(manifest.get("slug") or manifest.get("id") or "").strip()
+        if not slug:
+            name = str(manifest.get("name") or "produto")
+            slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+        # Trim the version suffix (_v001) if present
+        slug = re.sub(r"_v\d+$", "", slug)
+        # Keep only alphanumeric and hyphens, uppercase, max 16 chars
+        clean = re.sub(r"[^a-z0-9-]", "", slug.lower())[:16].strip("-")
+        return f"SM3D-{clean.upper()}-001"
+
+    def _default_variations(self, base_sku: str, unit_price: float) -> list[dict[str, Any]]:
+        """Return 2 standard variations: 1 unit and a pack of 10 (10% bulk discount)."""
+        pack_price = round(unit_price * 10 * 0.90, 2)
+        return [
+            {
+                "sku": f"{base_sku}-UN1",
+                "name": "1 unidade",
+                "quantity": 1,
+                "stock": 100,
+                "price_brl": unit_price,
+                "description": "Peça individual — cor conforme disponibilidade (consulte antes).",
+            },
+            {
+                "sku": f"{base_sku}-KIT10",
+                "name": "Kit 10 unidades (10% desconto)",
+                "quantity": 10,
+                "stock": 100,
+                "price_brl": pack_price,
+                "description": "Lote de 10 peças iguais ou em cores variadas — 10% de desconto sobre o unitário.",
+            },
+        ]
 
     def _estimate_material_g(self, manifest: dict[str, Any], metrics: dict[str, Any], rules: dict[str, object]) -> float:
         minimum, maximum = rules["material_range_g"]
@@ -377,6 +421,7 @@ bullet_points deve ter no maximo 5 itens. hashtags deve ter no maximo 10 itens.
         material: str,
         manifest: dict[str, Any],
         commerce_content: dict[str, Any],
+        sku: str = "",
     ) -> list[dict[str, Any]]:
         slug_title = project_name.replace("_", " ").replace("-", " ").strip().title()
         category = self._category_for_project(project_name)
@@ -455,6 +500,9 @@ bullet_points deve ter no maximo 5 itens. hashtags deve ter no maximo 10 itens.
                     ),
                     "bullet_points": content.get("bullet_points") or [],
                     "hashtags": content.get("hashtags") or self._hashtags(project_name, material),
+                    "sku": f"{sku}-{channel[:2].upper()}" if sku else "",
+                    "default_stock": 100,
+                    "warranty": {"type": "seller", "duration": 1, "unit": "months", "label": "1 mês — garantia do vendedor"},
                 }
             )
         return enriched
