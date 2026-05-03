@@ -209,6 +209,40 @@ def test_publish_uploads_local_files_instead_of_source_urls(monkeypatch: pytest.
     assert all("source" not in pic for pic in pictures), "source URLs não devem ser enviadas ao ML"
 
 
+def test_resolve_local_product_images_resolves_storage_url_paths(tmp_path: Path) -> None:
+    """Paths stored as /storage/... must be resolved against storage_root, not treated as
+    absolute filesystem paths — otherwise resolve_local_product_images always returns []
+    in production (root cause of the ML variation picture_ids bug)."""
+    import app.core.config as cfg_module
+
+    # Create a fake image at {tmp_path}/projects/p1/previews/photo.jpg
+    previews_dir = tmp_path / "projects" / "p1" / "previews"
+    previews_dir.mkdir(parents=True)
+    img = previews_dir / "photo.jpg"
+    img.write_bytes(b"FAKEJPEG")
+
+    service = StoreService()
+    # Patch storage_root to tmp_path so the service resolves paths correctly
+    original_storage_root = service.settings.__class__.storage_root.fget  # type: ignore[attr-defined]
+    service.settings.__class__.storage_root = property(lambda self: tmp_path)  # type: ignore[attr-defined]
+    try:
+        project = {
+            "id": "p1",
+            "name": "Test",
+            "preview_url": None,
+            "previews": [
+                # URL-relative path as stored by preview_service._artifact
+                {"label": "photo.jpg", "path": "/storage/projects/p1/previews/photo.jpg", "kind": "preview"}
+            ],
+            "sales_profile": {},
+        }
+        result = service.resolve_local_product_images(project)
+        assert result, "deve encontrar a imagem resolvendo /storage/ contra storage_root"
+        assert str(img) in result, f"caminho esperado {img} não está em {result}"
+    finally:
+        service.settings.__class__.storage_root = property(original_storage_root)  # type: ignore[attr-defined]
+
+
 def test_publish_variations_receive_picture_ids(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Each variation must have picture_ids — otherwise ML returns item.pictures.variation.quantity error."""
     service = StoreService()

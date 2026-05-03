@@ -686,6 +686,15 @@ class StoreService:
         return deduped
 
     def resolve_local_product_images(self, project: dict[str, Any]) -> list[str]:
+        """Return absolute filesystem paths to preview images stored locally.
+
+        Preview paths are stored as URL-relative strings like ``/storage/projects/abc/photo.jpg``.
+        They must be resolved against ``settings.storage_root`` to get the actual filesystem path
+        (e.g. ``{storage_root}/projects/abc/photo.jpg``).  Using the URL path directly in
+        ``Path(...).exists()`` always returns False in production, which is the root cause of the
+        fallback-to-URL-download path being triggered every time.
+        """
+        storage_root = self.settings.storage_root
         previews = list(project.get("previews", []) or [])
         marketplace_paths = [
             item.get("path")
@@ -699,9 +708,14 @@ class StoreService:
         for candidate in candidate_paths:
             if not candidate:
                 continue
-            path = Path(str(candidate))
-            if path.exists() and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}:
-                local_paths.append(str(path))
+            candidate_str = str(candidate)
+            # Resolve URL-relative paths like /storage/... against the filesystem storage root.
+            if candidate_str.startswith("/storage/"):
+                fs_path = storage_root / candidate_str[len("/storage/"):]
+            else:
+                fs_path = Path(candidate_str)
+            if fs_path.exists() and fs_path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}:
+                local_paths.append(str(fs_path))
         return list(dict.fromkeys(local_paths))
 
     def image_base_url_candidates(self, request_image_base_url: str | None, store: dict[str, Any] | None) -> list[str]:
