@@ -728,7 +728,10 @@ class StoreService:
             else:
                 fs_path = Path(candidate_str)
             if fs_path.exists() and fs_path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}:
-                local_paths.append(str(fs_path))
+                # Prefere versão ml_ready_* pré-processada (1200x1200, fundo cinza) quando disponível
+                ml_ready = fs_path.parent / f"ml_ready_{fs_path.stem}.jpg"
+                best = ml_ready if ml_ready.exists() else fs_path
+                local_paths.append(str(best))
         return list(dict.fromkeys(local_paths))
 
     def image_base_url_candidates(self, request_image_base_url: str | None, store: dict[str, Any] | None) -> list[str]:
@@ -883,31 +886,51 @@ class StoreService:
         return uploaded
 
     def _ensure_ml_image_size(self, image_path: str) -> tuple[bytes, str]:
-        """Retorna (bytes, mime_type) garantindo dimensão mínima de 1200px (requisito ML).
+        """Retorna (bytes, mime_type) garantindo dimensão mínima de 1200px para o ML.
 
-        ML exige ≥500px após remoção de bordas brancas. Usar canvas branco é PROIBIDO pois
-        o ML remove bordas brancas e volta ao tamanho original. A solução correta é usar
-        ImageOps.fit para esticar/cortar a imagem e preencher os 1200x1200 SEM bordas brancas.
+        Estratégia:
+        1. Detecta o conteúdo não-branco e corta bordas brancas puras.
+        2. Escala o conteúdo para 85% do canvas (1020px) — deixa margem de 90px.
+        3. Posiciona em canvas CINZA #E8E8E8 (ML só remove bordas BRANCAS puras).
+        Isso garante que após o trim do ML a imagem ainda tem 1200×1200.
         """
-        from PIL import Image, ImageOps  # noqa: PLC0415
+        from PIL import Image, ImageChops  # noqa: PLC0415
         import io as _io
 
         path = Path(image_path)
         target = 1200
+        bg_color = (232, 232, 232)  # cinza claro — ML não remove cinza, apenas branco puro
+
         with Image.open(path) as img:
-            orig_w, orig_h = img.size
             rgb = img.convert("RGB")
-            # Verifica se a imagem já tem ≥1200px nos dois lados — não reprocessar
-            if orig_w >= target and orig_h >= target:
-                buf = _io.BytesIO()
-                rgb.save(buf, format="JPEG", quality=92)
-                return buf.getvalue(), "image/jpeg"
-            # ImageOps.fit: escala + corta para preencher exatamente target×target SEM bordas
-            # Isso garante que o ML não encontrará bordas brancas para remover
-            fitted = ImageOps.fit(rgb, (target, target), Image.LANCZOS)
+            orig_w, orig_h = rgb.size
+
+            # Detecta bbox do conteúdo não-branco
+            white_bg = Image.new("RGB", rgb.size, (255, 255, 255))
+            diff = ImageChops.difference(rgb, white_bg)
+            bbox = diff.getbbox()
+            content = rgb.crop(bbox) if bbox else rgb
+            cw, ch = content.size
+
+            # Escala o conteúdo para 85% do canvas com margem (evita recorte)
+            usable = int(target * 0.85)
+            scale = usable / max(cw, ch, 1)
+            new_w = max(1, int(cw * scale))
+            new_h = max(1, int(ch * scale))
+            scaled = content.resize((new_w, new_h), Image.LANCZOS)
+
+            # Canvas cinza — ML não toca nessa cor
+            canvas = Image.new("RGB", (target, target), bg_color)
+            offset_x = (target - new_w) // 2
+            offset_y = (target - new_h) // 2
+            canvas.paste(scaled, (offset_x, offset_y))
+
             buf = _io.BytesIO()
-            fitted.save(buf, format="JPEG", quality=92)
-            logger.debug("ML image resized %dx%d → %dx%d via ImageOps.fit (%s)", orig_w, orig_h, target, target, path.name)
+            canvas.save(buf, format="JPEG", quality=92)
+            logger.debug(
+                "ML image: orig=%dx%d content_bbox=%dx%d scaled=%dx%d → %dx%d gray canvas (%s)",
+                orig_w, orig_h, cw, ch, new_w, new_h, target, target, path.name,
+            )
             return buf.getvalue(), "image/jpeg"
 
     def mercado_livre_upload_picture(self, access_token: str, image_path: str) -> dict[str, str]:
