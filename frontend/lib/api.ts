@@ -48,11 +48,34 @@ export type MarketplaceAttribute = {
   hashtags: string[];
   tags: string[];
   required_fields: string[];
+  sku?: string | null;
+  default_stock?: number | null;
+  warranty?: { type: string; duration: number; unit: string; label: string } | null;
+};
+
+export type SalesProfileVariation = {
+  sku: string;
+  name: string;
+  quantity: number;
+  stock: number;
+  price_brl: number;
+  description?: string | null;
+};
+
+export type SalesProfileWarranty = {
+  type: string;
+  duration: number;
+  unit: string;
+  label: string;
 };
 
 export type SalesProfile = {
   pricing_version: string;
   copy_source: string;
+  sku?: string | null;
+  default_stock?: number | null;
+  warranty?: SalesProfileWarranty | null;
+  variations?: SalesProfileVariation[] | null;
   estimated_material_g: number;
   estimated_print_hours: number;
   estimated_base_cost_brl: number;
