@@ -428,6 +428,62 @@ def test_build_payload_title_uses_project_name_not_stale_channel_title(monkeypat
     assert payload["title"] != "Impresso Em 3D", "Título não deve ser o channel.title desatualizado"
 
 
+def test_build_payload_variation_combo_attrs_not_in_item_attributes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ML error item.attributes.invalid: atributos usados em variation.attribute_combinations
+    NÃO podem estar em item.attributes simultaneamente (regra ML confirmada em 2026-05-03)."""
+    from unittest.mock import MagicMock
+    service = StoreService()
+    connector = MagicMock()
+    connector.marketplace = "mercado_livre"
+    store = _make_fake_store()
+    project = {
+        "id": "p1",
+        "name": "Chaveiro Kit",
+        "preview_url": None,
+        "previews": [],
+        "sales_profile": {
+            "suggested_price_50_margin_brl": 29.90,
+            "marketplace_attributes": [{"marketplace": "Mercado Livre", "title": "Chaveiro Kit", "full_description": "Desc"}],
+            "variations": [
+                {"sku": "KIT-1", "name": "Azul", "stock": 10, "price_brl": 29.90},
+                {"sku": "KIT-2", "name": "Vermelho", "stock": 10, "price_brl": 29.90},
+            ],
+            "warranty": {"type": "seller", "duration": 1, "unit": "months"},
+        },
+    }
+
+    # build_mercado_livre_attributes returns COLOR — which also appears in variation combos
+    fake_attrs = [
+        {"id": "BRAND", "name": "Marca", "value_name": "Genérica"},
+        {"id": "MODEL", "name": "Modelo", "value_name": "Chaveiro Kit"},
+        {"id": "COLOR", "name": "Cor", "value_name": "Azul"},  # THIS must be stripped
+        {"id": "MATERIAL", "name": "Material", "value_name": "Plástico"},
+    ]
+    monkeypatch.setattr(service, "build_mercado_livre_attributes", lambda *a, **kw: fake_attrs)
+    monkeypatch.setattr(service, "predict_mercado_livre_category_id", lambda *a, **kw: "MLB439316")
+    monkeypatch.setattr(service, "limit_mercado_livre_images", lambda cat, imgs: imgs)
+    monkeypatch.setattr(service, "resolve_product_images", lambda *a, **kw: [])
+
+    payload = service.build_payload_for_marketplace(connector, store, project, _FakePublishRequest())  # type: ignore[arg-type]
+
+    attribute_ids_in_payload = {a["id"] for a in payload.get("attributes", [])}
+    variation_combo_ids: set[str] = set()
+    for var in payload.get("variations", []):
+        for combo in var.get("attribute_combinations", []):
+            variation_combo_ids.add(combo["id"])
+
+    overlap = attribute_ids_in_payload & variation_combo_ids
+    assert not overlap, (
+        f"item.attributes.invalid: atributos {overlap} estão tanto em item.attributes "
+        f"quanto em variation.attribute_combinations — ML rejeita com HTTP 400"
+    )
+    # Sanity: COLOR was in the fake_attrs but must have been stripped
+    assert "COLOR" not in attribute_ids_in_payload, "COLOR deve ser removido de item.attributes quando usado em variations"
+    # Other attributes must remain
+    assert "MATERIAL" in attribute_ids_in_payload, "MATERIAL deve permanecer em item.attributes"
+    assert "BRAND" in attribute_ids_in_payload, "BRAND deve permanecer em item.attributes"
+
+
 def test_mercado_livre_validate_item_accepts_warning_only_validation_error(monkeypatch: pytest.MonkeyPatch) -> None:
     warning_payload = (
         '{"message":"Validation error","error":"validation_error","status":400,'

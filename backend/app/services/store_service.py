@@ -598,6 +598,18 @@ class StoreService:
             }
             if ml_variations:
                 payload["variations"] = ml_variations
+                # ML rule: any attribute ID used in variation.attribute_combinations
+                # MUST NOT also appear in item.attributes — causes error item.attributes.invalid.
+                variation_combo_ids: set[str] = set()
+                for var in ml_variations:
+                    for combo in var.get("attribute_combinations") or []:
+                        if combo.get("id"):
+                            variation_combo_ids.add(str(combo["id"]))
+                if variation_combo_ids:
+                    payload["attributes"] = [
+                        attr for attr in payload["attributes"]
+                        if attr.get("id") not in variation_combo_ids
+                    ]
             return payload
         if connector.marketplace == "shopee":
             return {
