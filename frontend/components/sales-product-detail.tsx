@@ -293,7 +293,7 @@ export function SalesProductDetail({ project }: Props) {
     setDraftLoading(true);
     setDraftError(null);
     try {
-      const result = await buildPublicationDraft(selectedStoreId, localProject.id, { mode: "publish", stock: 1 });
+      const result = await buildPublicationDraft(selectedStoreId, localProject.id, { mode: "publish", stock: 10, price_override_brl: 80.0 });
       setPublishDraft(result);
     } catch (error) {
       setDraftError(error instanceof Error ? error.message : "Falha ao publicar produto.");

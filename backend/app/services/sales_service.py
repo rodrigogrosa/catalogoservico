@@ -15,13 +15,22 @@ class SalesService:
     DEFAULT_MACHINE_WEAR_BRL_PER_HOUR = 1.25
     DEFAULT_PRINTER_POWER_KW = 0.12
     MARKETPLACE_COPY_PROMPT = """
-Voce e um especialista brasileiro em cadastro de produtos impressos em 3D.
-Explique o que e o produto em linguagem de venda e, se o nome indicar personagem conhecido, diga quem e e de qual universo veio.
-Nao invente licenca, autoria, compatibilidade oficial ou marca oficial.
-Se houver personagem, inclua alerta curto sobre direitos/licenca para venda.
-Responda JSON valido e compacto com: product_explanation, character_context, bullet_points, hashtags.
-character_context deve conter: is_character, name, origin, short_history, rights_note.
-bullet_points deve ter no maximo 5 itens. hashtags deve ter no maximo 10 itens.
+Você é um especialista brasileiro em e-commerce e cadastro de produtos impressos em 3D no Mercado Livre.
+Seu objetivo é criar textos de venda profissionais, atraentes e em português do Brasil, focados em conversão.
+
+Regras:
+- Escreva com entusiasmo e linguagem persuasiva, mas honesta.
+- Destaque os diferenciais: personalização, produção sob demanda, qualidade do material, versatilidade de uso.
+- Use verbos de ação na descrição (Presenteie, Decore, Colecione, Destaque).
+- Se o nome indicar personagem conhecido, explique quem é e de qual universo veio, sem inventar licença oficial.
+- Inclua alerta de direitos se houver personagem.
+- Não invente especificações técnicas, marcas oficiais ou compatibilidades.
+
+Responda JSON válido e compacto com: product_explanation, character_context, bullet_points, hashtags.
+- product_explanation: 2-3 frases de venda atraentes em português, citando material, uso e diferencial.
+- character_context: is_character (bool), name, origin, short_history, rights_note.
+- bullet_points: máximo 5 itens, iniciando com emoji, destacando benefícios reais.
+- hashtags: máximo 10 itens, sem #, em português, relevantes para o nicho.
 """
 
     CATEGORY_RULES = {
@@ -180,8 +189,10 @@ bullet_points deve ter no maximo 5 itens. hashtags deve ter no maximo 10 itens.
         return f"SM3D-{clean.upper()}-001"
 
     def _default_variations(self, base_sku: str, unit_price: float) -> list[dict[str, Any]]:
-        """Return 1 standard variation: kit of 10 pieces (10% bulk discount), stock=320."""
-        pack_price = round(unit_price * 10 * 0.90, 2)
+        """Return 1 standard variation: kit of 10 pieces (10% bulk discount), minimum R$80."""
+        MIN_UNIT_PRICE = 80.0
+        effective_unit = max(unit_price, MIN_UNIT_PRICE)
+        pack_price = round(effective_unit * 10 * 0.90, 2)
         return [
             {
                 "sku": f"{base_sku}-KIT10",
@@ -302,20 +313,21 @@ bullet_points deve ter no maximo 5 itens. hashtags deve ter no maximo 10 itens.
         slug_title = self._title(project_name)
         category = self._category_for_project(project_name)
         product_explanation = (
-            f"{slug_title} e um produto impresso em 3D sob demanda em {material}. "
-            f"{dimensions} O acabamento e feito por manufatura aditiva FDM, portanto pequenas linhas de camada podem aparecer."
+            f"Presenteie ou decore com exclusividade! {slug_title} é produzido sob demanda em {material} de alta qualidade. "
+            f"{dimensions} Peça artesanal feita em impressora 3D FDM — cada unidade é produzida exclusivamente para você."
         )
         if character.get("is_character"):
             product_explanation = (
-                f"{slug_title} e uma peca decorativa inspirada em {character['name']}. "
-                f"{character['short_history']} {dimensions} Produto impresso em 3D sob demanda em {material}."
+                f"Presenteie com estilo! {slug_title} é uma peça exclusiva inspirada em {character['name']}. "
+                f"{character['short_history']} {dimensions} Produzida sob demanda em {material} com excelente acabamento."
             )
         attributes = self._base_registration_attributes(project_name, material, dimensions, category, suggested_price)
         bullets = [
-            f"Produto impresso em 3D sob demanda em {material}.",
-            "Pode ter pequenas marcas de camada, caracteristicas do processo FDM.",
-            "Cor e acabamento podem variar conforme disponibilidade de filamento.",
-            "Ideal para presente, decoracao, colecao ou uso leve conforme o modelo.",
+            f"✅ Material resistente {material} — durabilidade garantida para uso diário.",
+            "🎨 Disponível em diversas cores — personalize como preferir.",
+            "📦 Produção sob demanda — peça fresca, recém-impressa para você.",
+            "🎁 Perfeito para presente, coleção ou decoração.",
+            "⭐ Acabamento FDM de qualidade — pequenas linhas de camada são parte do processo artesanal.",
         ]
         hashtags = self._hashtags(project_name, material)
         return {
@@ -323,7 +335,7 @@ bullet_points deve ter no maximo 5 itens. hashtags deve ter no maximo 10 itens.
             "character_context": character,
             "marketplaces": {
                 "Mercado Livre": {
-                    "title": f"{slug_title} Impresso Em 3D",
+                    "title": f"{slug_title} Impresso Em 3D - Personalizado Sob Demanda",
                     "category": category,
                     "short_description": product_explanation,
                     "full_description": self._full_marketplace_description(product_explanation, bullets, character),
@@ -332,7 +344,7 @@ bullet_points deve ter no maximo 5 itens. hashtags deve ter no maximo 10 itens.
                     "hashtags": hashtags,
                 },
                 "Shopee": {
-                    "title": f"{slug_title} 3D Personalizavel",
+                    "title": f"{slug_title} 3D Personalizável - Produção Sob Demanda",
                     "category": category,
                     "short_description": product_explanation,
                     "full_description": self._full_marketplace_description(product_explanation, bullets, character),
@@ -347,7 +359,7 @@ bullet_points deve ter no maximo 5 itens. hashtags deve ter no maximo 10 itens.
                     "full_description": self._instagram_caption(product_explanation, bullets, hashtags, character),
                     "attributes": [
                         {"label": "Formato", "value": "Post, Reels, Stories e Loja"},
-                        {"label": "Preco sugerido", "value": f"R$ {suggested_price:.2f}".replace(".", ",")},
+                        {"label": "Preço sugerido", "value": f"R$ {suggested_price:.2f}".replace(".", ",")},
                         {"label": "Chamada", "value": "Chame no direct/WhatsApp para cores e prazo"},
                     ],
                     "bullet_points": bullets,
@@ -1017,28 +1029,35 @@ bullet_points deve ter no maximo 5 itens. hashtags deve ter no maximo 10 itens.
         suggested_price: float,
     ) -> list[dict[str, str]]:
         character = self._character_context(project_name)
+        material_label = {
+            "PLA": "Plástico PLA — filamento biodegradável de alta resistência",
+            "PETG": "Plástico PETG — resistente a impacto e temperatura",
+            "ABS": "Plástico ABS — alta durabilidade e resistência mecânica",
+            "ASA": "Plástico ASA — resistente a UV e intempérie",
+            "TPU": "TPU — flexível e borrachoso, alta durabilidade",
+        }.get(material.upper(), f"Plástico {material} — filamento de alta qualidade")
         attributes = [
+            {"label": "Marca", "value": "Produção própria artesanal"},
+            {"label": "Material", "value": material_label},
             {"label": "Tipo de produto", "value": category},
-            {"label": "Material", "value": material},
-            {"label": "Processo de fabricacao", "value": "Impressao 3D FDM sob demanda"},
-            {"label": "Marca", "value": "Producao propria / sem marca oficial"},
-            {"label": "Condicao", "value": "Novo"},
-            {"label": "Acabamento", "value": "Linhas de camada podem ser visiveis"},
-            {"label": "Personalizacao", "value": "Consultar cores e escala disponiveis"},
+            {"label": "Processo de fabricação", "value": "Impressão 3D FDM sob demanda"},
+            {"label": "Condição", "value": "Novo"},
+            {"label": "Acabamento", "value": "FDM — linhas de camada podem ser visíveis (característica artesanal)"},
+            {"label": "Personalização", "value": "Consultar cores e escala disponíveis"},
             {"label": "Medidas", "value": dimensions},
-            {"label": "Prazo de producao", "value": "Informar conforme fila de impressao"},
-            {"label": "Conteudo da embalagem", "value": "1 unidade impressa em 3D"},
+            {"label": "Prazo de produção", "value": "Informar conforme fila de impressão"},
+            {"label": "Conteúdo da embalagem", "value": "1 unidade impressa em 3D"},
             {"label": "Uso recomendado", "value": "Decorativo, presente ou uso leve conforme modelo"},
             {"label": "Cuidados", "value": "Evitar calor excessivo, sol prolongado e impacto forte"},
         ]
         if suggested_price > 0:
-            attributes.insert(1, {"label": "Preco sugerido", "value": f"R$ {suggested_price:.2f}".replace(".", ",")})
+            attributes.insert(2, {"label": "Preço sugerido", "value": f"R$ {suggested_price:.2f}".replace(".", ",")})
         if character.get("is_character"):
             attributes.extend(
                 [
                     {"label": "Personagem/tema", "value": str(character["name"])},
                     {"label": "Universo de origem", "value": str(character["origin"])},
-                    {"label": "Licenca comercial", "value": "Verificar permissao de uso antes da venda"},
+                    {"label": "Licença comercial", "value": "Verificar permissão de uso antes da venda"},
                 ]
             )
         return attributes
@@ -1052,16 +1071,28 @@ bullet_points deve ter no maximo 5 itens. hashtags deve ter no maximo 10 itens.
         parts = [
             product_explanation,
             "",
-            "Destaques:",
-            *[f"- {item}" for item in bullets],
+            "🌟 POR QUE COMPRAR?",
+            *[f"  {item}" for item in bullets],
             "",
-            "Observacoes importantes:",
-            "- Produto feito sob demanda em impressora 3D.",
-            "- Pequenas variacoes de cor, textura e linhas de camada podem ocorrer.",
-            "- Confirme cor, escala e prazo antes da compra.",
+            "📋 INFORMAÇÕES IMPORTANTES:",
+            "  • Produto fabricado sob demanda — cada peça é produzida após a confirmação do pedido.",
+            "  • Pequenas variações de cor, textura e linhas de camada são características naturais do processo FDM.",
+            "  • Confirme a cor desejada, escala e prazo de produção antes de finalizar a compra.",
+            "  • Embalagem protetora incluída para garantir a chegada em perfeito estado.",
+            "",
+            "🚀 COMO FUNCIONA?",
+            "  1. Realize o pedido e confirme a cor/acabamento desejado.",
+            "  2. Produção iniciada em até 24h úteis após confirmação.",
+            "  3. Envio com código de rastreamento assim que pronto.",
+            "",
+            "💬 Dúvidas? Envie mensagem antes de comprar — respondemos rapidamente!",
         ]
         if character.get("is_character"):
-            parts.extend(["", f"Contexto do personagem: {character['short_history']}", str(character["rights_note"])])
+            parts.extend([
+                "",
+                f"🎭 SOBRE O PERSONAGEM: {character['short_history']}",
+                f"⚠️ {character['rights_note']}",
+            ])
         return "\n".join(parts)
 
     def _instagram_caption(
@@ -1074,13 +1105,14 @@ bullet_points deve ter no maximo 5 itens. hashtags deve ter no maximo 10 itens.
         lines = [
             product_explanation,
             "",
-            "Destaques:",
-            *[f"- {item}" for item in bullets[:3]],
+            "✨ Destaques:",
+            *[f"  {item}" for item in bullets[:3]],
             "",
-            "Quer uma cor ou tamanho especifico? Chame no direct.",
+            "🎨 Quer uma cor ou tamanho específico? Chame no direct! Fazemos sob demanda.",
+            "📦 Envio para todo o Brasil com rastreamento.",
         ]
         if character.get("is_character"):
-            lines.extend(["", f"Inspiracao visual: {character['name']} ({character['origin']}). Verifique disponibilidade e licenca de uso."])
+            lines.extend(["", f"🎭 Inspiração visual: {character['name']} ({character['origin']}). Verifique disponibilidade e licença de uso antes da venda."])
         lines.extend(["", " ".join(f"#{tag.replace(' ', '')}" for tag in hashtags[:12])])
         return "\n".join(lines)
 

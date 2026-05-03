@@ -541,6 +541,7 @@ class StoreService:
         channels = sales.get("marketplace_attributes") or []
         channel = next((item for item in channels if self.matches_channel(connector.marketplace, item.get("marketplace", ""))), channels[0] if channels else {})
         price = float(request.price_override_brl or sales.get("suggested_price_50_margin_brl") or 0)
+        price = max(price, 80.0)  # preço mínimo R$80,00 por política comercial
         images = self.resolve_product_images(project, request.image_base_url, store)
         # Always derive title from current project name — the saved channel.title may be stale
         # (generated when the project had no name yet). channel.title is only used as last resort.
@@ -1044,7 +1045,7 @@ class StoreService:
         color = self.infer_color(project, channel)
         pattern_name = self.infer_pattern_name(project, channel)
         values_by_id: dict[str, Any] = {
-            "BRAND": "Genérica",
+            "BRAND": "Produção Própria Artesanal",
             "MANUFACTURER": manufacturer,
             "MODEL": model_name,
             "MATERIAL": material,
