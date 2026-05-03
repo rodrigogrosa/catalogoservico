@@ -21,6 +21,36 @@ import {
 } from "@/lib/api";
 import { PERMISSIONS } from "@/lib/permissions";
 
+/** Catálogo de categorias do Mercado Livre usadas nesta loja.
+ *  Confirmado via GET /categories/{id} — caminhos verificados na API. */
+const ML_CATEGORIES = [
+  {
+    id: "MLB439316",
+    label: "Chaveiros",
+    path: "Indústria e Comércio > Merchandising",
+  },
+  {
+    id: "MLB1839",
+    label: "Brinquedos / Figuras de Ação",
+    path: "Brinquedos e Hobbies > Bonecos e Bonecas",
+  },
+  {
+    id: "MLB186814",
+    label: "Estátua / Estatueta Decorativa",
+    path: "Casa e Decoração > Figuras Decorativas",
+  },
+  {
+    id: "MLB1637",
+    label: "Vasos Decorativos",
+    path: "Casa e Decoração > Figuras Decorativas",
+  },
+  {
+    id: "MLB272183",
+    label: "Acessórios / Organizadores",
+    path: "Casa e Decoração > Organização para Casa",
+  },
+] as const;
+
 type Props = {
   project: ProjectDetail;
 };
@@ -758,15 +788,32 @@ function StorePublicationPanel({
                   <div className="mt-4 rounded-[1.2rem] border border-slate-900/10 bg-slate-50 p-4">
                     <label className="block">
                       <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Categoria MLB do produto</span>
+                      {/* Quick-pick: catálogo de categorias usadas nesta loja */}
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {ML_CATEGORIES.map((cat) => (
+                          <button
+                            key={cat.id}
+                            type="button"
+                            onClick={() => onCategoryIdChange(cat.id)}
+                            className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+                              categoryId === cat.id
+                                ? "border-orange-500 bg-orange-500 text-white"
+                                : "border-slate-900/10 bg-white text-slate-700 hover:border-orange-400 hover:text-orange-700"
+                            }`}
+                          >
+                            {cat.label}
+                          </button>
+                        ))}
+                      </div>
                       <input
                         value={categoryId}
                         onChange={(event) => onCategoryIdChange(event.target.value)}
-                        placeholder="Ex.: MLB3937"
+                        placeholder="Ex.: MLB439316"
                         className="mt-3 w-full rounded-[1rem] border border-slate-900/10 bg-white px-4 py-3 text-base text-slate-950 outline-none focus:border-orange-500"
                       />
                     </label>
-                    <p className="mt-2 text-sm leading-6 text-slate-600">
-                      Informe a categoria correta do Mercado Livre para remover o bloqueio de publicação.
+                    <p className="mt-1 text-xs leading-5 text-slate-500">
+                      Clique numa categoria acima ou digite o ID manualmente.
                     </p>
                     <div className="mt-3 flex flex-wrap gap-3">
                       <button
