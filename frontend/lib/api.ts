@@ -841,6 +841,15 @@ export async function backfillCatalog(): Promise<{ fixed: number; skipped: numbe
   return response.json();
 }
 
+export async function renameAllProjects(): Promise<{ renamed: number; skipped: number; errors: string[] }> {
+  const response = await apiFetchResilient("/projects/rename-all", {
+    method: "POST",
+    headers: authHeaders(),
+  }, 120000);
+  if (!response.ok) throw await parseApiError(response, "Falha ao renomear projetos");
+  return response.json();
+}
+
 export async function processProject(id: string, payload: ProcessPayload): Promise<ProjectSummary> {
   const response = await apiFetchResilient(`/projects/${id}/process`, {
     method: "POST",

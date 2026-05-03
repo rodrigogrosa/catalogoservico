@@ -9,7 +9,7 @@ import { ProjectList } from "@/components/project-list";
 import { SalesCatalogPanel } from "@/components/sales-catalog-panel";
 import { ProjectStatCard } from "@/components/project-stat-card";
 import { useProjects } from "@/hooks/use-projects";
-import { backfillCatalog } from "@/lib/api";
+import { backfillCatalog, renameAllProjects } from "@/lib/api";
 import { PERMISSIONS } from "@/lib/permissions";
 import { buildProjectMetrics } from "@/lib/project-metrics";
 
@@ -26,6 +26,8 @@ export default function CatalogPage() {
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [backfilling, setBackfilling] = useState(false);
   const [backfillMsg, setBackfillMsg] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState(false);
+  const [renameMsg, setRenameMsg] = useState<string | null>(null);
 
   // Paginated fetch for the "Acervo de projetos" tab.
   const { error, loading, projects, total, pages, refreshProjects } = useProjects({
@@ -57,6 +59,21 @@ export default function CatalogPage() {
       setBackfilling(false);
     }
   }, [refreshSales, refreshProjects]);
+
+  const handleRenameAll = useCallback(async () => {
+    setRenaming(true);
+    setRenameMsg(null);
+    try {
+      const result = await renameAllProjects();
+      setRenameMsg(`${result.renamed} projeto(s) renomeado(s), ${result.skipped} sem alteração.`);
+      void refreshProjects();
+      void refreshSales();
+    } catch {
+      setRenameMsg("Erro ao renomear projetos. Tente novamente.");
+    } finally {
+      setRenaming(false);
+    }
+  }, [refreshProjects, refreshSales]);
 
   function handleSearchChange(e: React.ChangeEvent<HTMLInputElement>) {
     setSearch(e.target.value);
@@ -93,6 +110,9 @@ export default function CatalogPage() {
         </section>
 
         {error ? <p className="rounded-[1.35rem] border border-red-200 bg-red-50 px-5 py-4 text-base text-red-700">{error}</p> : null}
+        {renameMsg && (
+          <p className="rounded-[1.35rem] border border-blue-200 bg-blue-50 px-5 py-3 text-sm text-blue-800">{renameMsg}</p>
+        )}
 
         <section className="portal-card rounded-[1.6rem] px-5 py-5">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -101,6 +121,14 @@ export default function CatalogPage() {
               <h3 className="mt-2 text-2xl font-semibold text-slate-950">Escolha a visão que faz sentido para a operação</h3>
             </div>
             <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={() => void handleRenameAll()}
+                disabled={renaming}
+                className="rounded-full border border-blue-200 bg-blue-50 px-4 py-2.5 text-sm font-semibold text-blue-800 transition hover:bg-blue-100 disabled:opacity-50"
+              >
+                {renaming ? "Renomeando…" : "Renomear todos em PT"}
+              </button>
               <button
                 type="button"
                 onClick={() => setActiveTab("projects")}

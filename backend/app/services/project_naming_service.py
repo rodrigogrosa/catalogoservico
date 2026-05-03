@@ -12,6 +12,139 @@ from app.services.sales_service import SalesService
 
 class ProjectNamingService:
     SMALL_WORDS = {"da", "de", "do", "das", "dos", "e", "em", "para", "com", "of", "and", "the", "to", "from", "a"}
+
+    # English term → Portuguese commercial name.  Ordered: longer phrases before shorter ones
+    # so that multi-word matches take priority.
+    WORD_TRANSLATIONS: list[tuple[str, str]] = [
+        # --- Multi-word phrases first ---
+        (r"\bbob esponja\b", "Bob Esponja"),
+        (r"\bkey\s*chain\b|\bkeyring\b", "Chaveiro"),
+        (r"\bcable\s*holder\b|\bcable\s*organizer\b|\bcord\s*organizer\b", "Organizador de Cabos"),
+        (r"\bphone\s*stand\b|\bcell\s*stand\b|\bphone\s*holder\b", "Suporte para Celular"),
+        (r"\bphone\s*case\b|\bcell\s*case\b", "Capa de Celular"),
+        (r"\btooth\s*brush\s*holder\b", "Porta-Escova de Dentes"),
+        (r"\bpencil\s*holder\b|\bpen\s*holder\b", "Porta-Caneta"),
+        (r"\bcard\s*holder\b", "Porta-Cartão"),
+        (r"\bwall\s*mount\b|\bwall\s*bracket\b", "Suporte de Parede"),
+        (r"\bseed\s*(?:pot|tray|box)\b", "Vaso para Sementes"),
+        (r"\bplant(?:er)?\s*pot\b|\bflower\s*pot\b", "Vaso de Flores"),
+        (r"\bplant(?:er)?\b", "Vaso de Plantas"),
+        (r"\btea\s*light\b", "Porta-Vela"),
+        (r"\bcandle\s*holder\b", "Porta-Vela"),
+        (r"\btoothpick\s*holder\b", "Porta-Palito"),
+        (r"\bnapkin\s*holder\b", "Porta-Guardanapo"),
+        (r"\bbusiness\s*card\b", "Porta-Cartão de Visita"),
+        (r"\bstorage\s*box\b|\bstorage\s*case\b|\bstorage\s*organizer\b", "Organizador"),
+        (r"\bread\s*more\b", ""),
+        # --- Personagens / categorias especiais ---
+        (r"\bdinosaur\b|\bdino\b", "Dinossauro"),
+        (r"\bdragon\b|\bdragao\b", "Dragão"),
+        (r"\bunicorn\b|\bunicornio\b", "Unicórnio"),
+        (r"\bphoenix\b", "Fênix"),
+        (r"\bwolf\b", "Lobo"),
+        (r"\bfox\b", "Raposa"),
+        (r"\bbear\b|\burso\b", "Urso"),
+        (r"\bcat\b|\bgato\b", "Gato"),
+        (r"\bdog\b|\bcachorro\b|\bpuppy\b", "Cachorro"),
+        (r"\bbunny\b|\brabbit\b|\bcoelho\b", "Coelho"),
+        (r"\bbird\b|\bpassaro\b", "Pássaro"),
+        (r"\bowl\b|\bcoruja\b", "Coruja"),
+        (r"\bshark\b|\btubaro\b", "Tubarão"),
+        (r"\boctopus\b|\bpolvo\b", "Polvo"),
+        (r"\bfrog\b|\bsapo\b", "Sapo"),
+        (r"\bturtle\b|\btartaruga\b", "Tartaruga"),
+        (r"\bsnake\b|\bcobra\b", "Cobra"),
+        (r"\bskeleton\b|\besqueleto\b", "Esqueleto"),
+        (r"\bskull\b|\bcaveira\b|\bcranio\b", "Caveira"),
+        (r"\bghost\b|\bfantasma\b", "Fantasma"),
+        (r"\bwitch\b|\bbruxa\b", "Bruxa"),
+        (r"\bknight\b|\bcavaleiro\b", "Cavaleiro"),
+        (r"\bwarrior\b|\bguerreiro\b", "Guerreiro"),
+        (r"\bwizard\b|\bfeiticeiro\b|\bwizard\b", "Feiticeiro"),
+        (r"\bsword\b|\bespada\b", "Espada"),
+        (r"\bshield\b|\bescudo\b", "Escudo"),
+        (r"\bdagger\b|\bfaca\b|\bfacão\b", "Adaga"),
+        (r"\baxe\b|\bmachado\b", "Machado"),
+        (r"\bbow\b|\barco\b", "Arco"),
+        (r"\barmor\b|\barmadura\b", "Armadura"),
+        # --- Objetos do cotidiano ---
+        (r"\borganizer\b|\borganiser\b|\borganizador\b", "Organizador"),
+        (r"\bstorage\b", "Organizador"),
+        (r"\btray\b|\bbandeja\b", "Bandeja"),
+        (r"\bdrawer\b|\bgaveta\b", "Gaveta"),
+        (r"\bframe\b|\bmoldura\b", "Moldura"),
+        (r"\bvase\b|\bvaso\b", "Vaso"),
+        (r"\blamp\b|\bluminaria\b|\blampa\b", "Luminária"),
+        (r"\bnight\s*light\b|\bnightlight\b", "Luminária Noturna"),
+        (r"\blight\b", "Luminária"),
+        (r"\bshelf\b|\bprateleira\b", "Prateleira"),
+        (r"\bhook\b|\bhanger\b|\bgancho\b", "Gancho"),
+        (r"\bclamp\b|\bprendedor\b", "Prendedor"),
+        (r"\bclip\b|\bclipe\b", "Clipe"),
+        (r"\bbracket\b", "Suporte"),
+        (r"\bdice\b|\bdado\b", "Dado"),
+        (r"\bcoin\b|\bmoeda\b", "Moedinha"),
+        (r"\btoken\b|\bficha\b", "Ficha"),
+        (r"\bpuzzle\b|\bquebra-cabeca\b", "Quebra-Cabeça"),
+        (r"\bfidget\b", "Fidget"),
+        (r"\bspinner\b", "Spinner"),
+        (r"\bbadge\b|\bpin\b|\bbrooch\b|\bbrocha\b", "Broche"),
+        (r"\bnecklace\b|\bcolar\b", "Colar"),
+        (r"\bring\b|\banel\b", "Anel"),
+        (r"\bbracelet\b|\bpulseira\b", "Pulseira"),
+        (r"\bearring\b|\bbrinco\b", "Brinco"),
+        (r"\bcrown\b|\bcoroa\b", "Coroa"),
+        (r"\bhelmet\b|\bcapacete\b", "Capacete"),
+        (r"\bmask\b|\bmascara\b", "Máscara"),
+        (r"\bfigurine\b|\bfigure\b|\bfigura\b|\bstatue\b|\bestatueta\b|\bboneco\b", "Miniatura"),
+        (r"\bbust\b|\bbusto\b", "Busto"),
+        (r"\bmodel\b|\bmodelo\b", "Modelo"),
+        (r"\bsign\b|\bplaca\b", "Placa"),
+        (r"\bname\s*plate\b|\bnameplate\b", "Plaquinha"),
+        (r"\bplate\b|\bprato\b", "Placa"),
+        (r"\bbox\b|\bcaixa\b", "Caixa"),
+        (r"\bcase\b|\bestojo\b|\bcapa\b", "Estojo"),
+        (r"\bcup\b|\bxicara\b|\bcopo\b", "Xícara"),
+        (r"\bbottle\b|\bgarrafa\b", "Garrafa"),
+        (r"\bopener\b|\babridor\b", "Abridor"),
+        (r"\bcoaster\b|\bdescanso\b|\bporta-copo\b", "Porta-Copo"),
+        (r"\bbookmark\b|\bseparador\b", "Marcador de Página"),
+        (r"\btower\b|\btorre\b", "Torre"),
+        (r"\bcastle\b|\bcastelo\b", "Castelo"),
+        (r"\bhouse\b|\bcasa\b", "Casinha"),
+        (r"\bcar\b|\bcarro\b|\bauto\b", "Carro"),
+        (r"\bship\b|\bnavio\b|\bbarco\b", "Barco"),
+        (r"\bplane\b|\baviao\b|\bavião\b", "Avião"),
+        (r"\brocket\b|\bfoguete\b", "Foguete"),
+        (r"\bspaceship\b|\bnave\b", "Nave Espacial"),
+        (r"\btank\b|\btanque\b", "Tanque"),
+        (r"\bgun\b|\bpistol\b|\bpistola\b", "Pistola"),
+        (r"\brifle\b|\bfusil\b", "Rifle"),
+        (r"\bgrenade\b|\bganada\b|\bgranada\b", "Granada"),
+        (r"\bflower\b|\bflor\b", "Flor"),
+        (r"\bleaf\b|\bfolha\b", "Folha"),
+        (r"\btree\b|\barvore\b|\bárvore\b", "Árvore"),
+        (r"\bcactus\b|\bcacto\b", "Cacto"),
+        (r"\bmushroom\b|\bcogumelo\b", "Cogumelo"),
+        (r"\bstar\b|\bestrela\b", "Estrela"),
+        (r"\bmoon\b|\blua\b", "Lua"),
+        (r"\bsun\b|\bsol\b", "Sol"),
+        (r"\bheart\b|\bcoração\b|\bcoracao\b", "Coração"),
+        (r"\bbutterfly\b|\bmariposa\b|\bborboleta\b", "Borboleta"),
+        (r"\bdragonfly\b|\blibélula\b", "Libélula"),
+        (r"\bspider\b|\baranhas\b|\baranha\b", "Aranha"),
+        (r"\bantler\b|\bchifre\b|\bgalho\b", "Galho"),
+        (r"\bfeather\b|\bpena\b", "Pena"),
+        (r"\bwave\b|\bonda\b", "Onda"),
+        (r"\bcrystal\b|\bcristal\b", "Cristal"),
+        (r"\bgem\b|\bpedra\b", "Gema"),
+        # --- Material / técnica impressão ---
+        (r"\bflexi(ble)?\b", "Flex"),
+        (r"\barticulated\b|\barticulado\b", "Articulado"),
+        (r"\bprinted\s*in\s*place\b|\bprint\s*in\s*place\b|\bpip\b", "Print-in-Place"),
+        (r"\bmulticolor\b|\bmulticolou?r\b|\bmulticor\b", "Multicor"),
+    ]
+
     DROP_TERMS = {
         "snapmaker",
         "compatible",
@@ -206,8 +339,14 @@ Nao invente franquia ou personagem sem boa base visual/textual.
         return ""
 
     def _titleize(self, text: str) -> str:
+        # Apply word-level translations (longest match first — list is already ordered).
+        translated = text
+        for pattern, replacement in self.WORD_TRANSLATIONS:
+            translated = re.sub(pattern, replacement, translated, flags=re.IGNORECASE)
+        translated = re.sub(r"\s+", " ", translated).strip()
+
         words: list[str] = []
-        for index, word in enumerate(text.split()):
+        for index, word in enumerate(translated.split()):
             lowered = word.lower()
             if lowered.isdigit():
                 words.append(word)
@@ -215,11 +354,17 @@ Nao invente franquia ou personagem sem boa base visual/textual.
             if index > 0 and lowered in self.SMALL_WORDS:
                 words.append(lowered)
                 continue
-            if lowered in {"ui", "rc2", "cf", "gf", "ams", "u1", "3d", "rc", "ssj4"}:
+            if lowered in {"ui", "rc2", "cf", "gf", "ams", "u1", "3d", "rc", "ssj4", "r2-d2", "c-3po"}:
                 words.append(lowered.upper())
                 continue
+            # Preserve words that already have a capital (e.g. from translations above).
+            if word[0].isupper():
+                words.append(word)
+                continue
             words.append(lowered.capitalize())
+
         title = " ".join(words)
+        # Legacy single-token replacements kept for back-compat.
         title = title.replace(" Keychain", " Chaveiro")
         title = title.replace(" Holder", " Suporte")
         title = title.replace(" Mount", " Suporte")

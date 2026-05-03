@@ -171,7 +171,8 @@ class TestFullProjectLifecycle:
         project_id = project["id"]
         assert project_id.startswith("dinosaur-stl_v")
         assert project["status"] in ("pending", "uploaded")
-        assert "dinosaur" in project["name"].lower()
+        # "dinosaur" is translated to "dinossauro" in the PT naming pipeline.
+        assert any(w in project["name"].lower() for w in ("dinosaur", "dinossauro"))
 
         # --- GET project (must load via direct O(1) path) ---
         get_resp = client.get(f"/api/v1/projects/{project_id}", headers=auth_headers)

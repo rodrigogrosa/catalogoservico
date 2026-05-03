@@ -528,6 +528,49 @@ class ProjectService:
                 skipped += 1
         return {"fixed": fixed, "skipped": skipped, "errors": errors_list}
 
+    def rename_all_projects(self) -> dict[str, Any]:
+        """Re-generate Portuguese commercial names for every project using the improved naming service."""
+        all_manifests = self.storage.list_manifests()
+        renamed = 0
+        skipped = 0
+        errors_list: list[str] = []
+        for summary in all_manifests:
+            project_id = summary.get("id")
+            if not project_id:
+                skipped += 1
+                continue
+            try:
+                manifest = self.storage.load_manifest(project_id)
+                if manifest is None:
+                    skipped += 1
+                    continue
+                original_filename = str(manifest.get("original_filename") or manifest.get("name") or "")
+                origin_url = manifest.get("origin_url") or manifest.get("source_url") or ""
+                new_name = self.make_friendly_project_name(
+                    original_filename,
+                    previews=manifest.get("previews") or [],
+                    source_url=origin_url or None,
+                    allow_vision=False,
+                )
+                old_name = manifest.get("name", "")
+                if new_name == old_name:
+                    skipped += 1
+                    continue
+                manifest["name"] = new_name
+                manifest["updated_at"] = datetime.now(tz=timezone.utc).isoformat()
+                # Regenerate sales_profile so marketplace titles reflect the new name.
+                try:
+                    manifest["sales_profile"] = self.sales_service.build_sales_profile(manifest, allow_llm=False)
+                except Exception:  # noqa: BLE001
+                    pass
+                self.storage.save_manifest(manifest)
+                logger.info("project_renamed", extra={"project_id": project_id, "old": old_name, "new": new_name})
+                renamed += 1
+            except Exception as exc:  # noqa: BLE001
+                errors_list.append(f"{project_id}: {exc}")
+                skipped += 1
+        return {"renamed": renamed, "skipped": skipped, "errors": errors_list}
+
     def make_friendly_project_name(
         self,
         source_name: str,

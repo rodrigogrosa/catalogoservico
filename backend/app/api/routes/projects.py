@@ -92,6 +92,16 @@ async def backfill_catalog(
     return service.backfill_sales_profiles()
 
 
+@router.post("/rename-all", response_model=dict)
+async def rename_all_projects(
+    service: ProjectService = Depends(get_project_service),
+    current_user: AuthUser = Depends(require_permission("projects.process")),
+) -> dict:
+    """Re-generate Portuguese commercial names for all projects."""
+    logger.info("rename_all_requested", extra={"username": current_user.username})
+    return await asyncio.to_thread(service.rename_all_projects)
+
+
 @router.get("/{project_id}/progress")
 async def stream_project_progress(
     project_id: str,

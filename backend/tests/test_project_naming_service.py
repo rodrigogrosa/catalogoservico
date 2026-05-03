@@ -20,4 +20,5 @@ def test_non_character_name_is_humanized_for_sales() -> None:
 def test_keychain_name_becomes_friendlier() -> None:
     service = ProjectNamingService()
     title = service.generate_name(source_name="flower-keychain-from-a-to-z.3mf")
-    assert title == "Flower Chaveiro"
+    # "flower" is now translated to "Flor" — Portuguese commercial name.
+    assert title == "Flor Chaveiro"
