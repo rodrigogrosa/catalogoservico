@@ -565,6 +565,17 @@ class StoreService:
                 ]
             else:
                 ml_variations = []
+            # Build warranty sale_terms from sales_profile
+            warranty_data = sales.get("warranty") or {}
+            _wtype = str(warranty_data.get("type") or "seller")
+            _wduration = int(warranty_data.get("duration") or 1)
+            _wunit = str(warranty_data.get("unit") or "months")
+            _wunit_label = "meses" if _wunit in ("months", "meses") else "anos"
+            _wtype_label = "Garantia do vendedor" if _wtype == "seller" else "Sem garantia"
+            ml_sale_terms = [
+                {"id": "WARRANTY_TYPE", "value_name": _wtype_label},
+                {"id": "WARRANTY_TIME", "value_name": f"{_wduration} {_wunit_label}"},
+            ]
             payload: dict[str, Any] = {
                 "title": ml_title,
                 "category_id": category_id,
@@ -575,6 +586,7 @@ class StoreService:
                 "condition": "new",
                 "listing_type_id": store.get("settings", {}).get("listing_type_id", "gold_special"),
                 "pictures": [{"source": image} for image in images],
+                "sale_terms": ml_sale_terms,
                 "description_plain_text": description,
                 "attributes": self.build_mercado_livre_attributes(category_id, project, channel),
                 "images": images,
@@ -728,17 +740,23 @@ class StoreService:
         if not access_token:
             raise ValueError("Mercado Livre: access_token ausente para publicação.")
 
-        if not product_payload.get("pictures"):
-            local_images = self.resolve_local_product_images(project)
-            if local_images:
-                product_payload["pictures"] = self.upload_local_mercado_livre_pictures(access_token, local_images)
+        # Always prefer local file upload to ML — source URLs from our backend aren't
+        # publicly downloadable by ML's servers. Only fall back to source URLs if no
+        # local files exist.
+        local_images = self.resolve_local_product_images(project)
+        if local_images:
+            product_payload["pictures"] = self.upload_local_mercado_livre_pictures(access_token, local_images)
+        elif not product_payload.get("pictures"):
+            pass  # no pictures available at all
 
         item_payload = {
             key: value
             for key, value in product_payload.items()
-            if key in {"title", "category_id", "price", "currency_id", "available_quantity", "buying_mode", "condition", "listing_type_id", "pictures", "attributes"}
+            if key in {"title", "category_id", "price", "currency_id", "available_quantity", "buying_mode", "condition", "listing_type_id", "pictures", "attributes", "variations", "sale_terms"}
         }
-        item_payload["sale_terms"] = store.get("settings", {}).get("sale_terms", [])
+        # Fall back to store-level sale_terms only if not already built from the project
+        if not item_payload.get("sale_terms"):
+            item_payload["sale_terms"] = store.get("settings", {}).get("sale_terms", [])
 
         self.mercado_livre_validate_item(access_token, item_payload)
 
@@ -758,8 +776,8 @@ class StoreService:
                     path=f"/items/{item_id}/description",
                     payload={"plain_text": description_plain_text},
                 )
-            except ValueError:
-                pass
+            except Exception:  # noqa: BLE001
+                pass  # description is optional; do not fail the whole publish
         return created
 
     def upload_local_mercado_livre_pictures(self, access_token: str, image_paths: list[str]) -> list[dict[str, str]]:
@@ -965,6 +983,14 @@ class StoreService:
                 value_name = str(values_by_id.get(attribute_id, "")).strip()
                 if value_name:
                     normalized.append(self.build_mercado_livre_attribute(attribute, value_name=value_name[:255]))
+        # GTIN (Código universal): send "Não se aplica" so ML doesn't show it empty
+        seen_ids = {item["id"] for item in normalized if item.get("id")}
+        if "GTIN" in by_id and "GTIN" not in seen_ids:
+            option = self.match_mercado_livre_attribute_option(by_id["GTIN"], "Não se aplica")
+            if option:
+                normalized.append({"id": "GTIN", "name": by_id["GTIN"].get("name", "Código universal do produto"), "value_id": option.get("id"), "value_name": option.get("name")})
+            else:
+                normalized.append({"id": "GTIN", "name": by_id["GTIN"].get("name", "Código universal do produto"), "value_name": "Não se aplica"})
         return normalized
 
     def build_mercado_livre_attribute(
