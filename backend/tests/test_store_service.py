@@ -209,7 +209,45 @@ def test_publish_uploads_local_files_instead_of_source_urls(monkeypatch: pytest.
     assert all("source" not in pic for pic in pictures), "source URLs não devem ser enviadas ao ML"
 
 
-def test_publish_does_not_fail_when_description_endpoint_raises(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_publish_variations_receive_picture_ids(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Each variation must have picture_ids — otherwise ML returns item.pictures.variation.quantity error."""
+    service = StoreService()
+    project = _make_fake_project(tmp_path)
+    store = _make_fake_store()
+
+    product_payload = {
+        "title": "T", "category_id": "MLB439316", "price": 29.90, "available_quantity": 50,
+        "currency_id": "BRL", "buying_mode": "buy_it_now", "condition": "new",
+        "listing_type_id": "gold_special", "pictures": [],
+        "sale_terms": [{"id": "WARRANTY_TYPE", "value_name": "Garantia do vendedor"}],
+        "attributes": [], "description_plain_text": "Desc",
+        "variations": [
+            {"price": 269.10, "available_quantity": 320, "seller_custom_field": "SKU-KIT10",
+             "attribute_combinations": [{"id": "COLOR", "value_name": "Kit 10 unidades"}]},
+        ],
+    }
+
+    monkeypatch.setattr(service, "resolve_local_product_images", lambda p: [str(tmp_path / "photo.jpg")])
+    monkeypatch.setattr(service, "upload_local_mercado_livre_pictures", lambda tok, paths: [{"id": "ML_P1"}, {"id": "ML_P2"}])
+    monkeypatch.setattr(service, "mercado_livre_validate_item", lambda tok, p: {})
+
+    sent: list[dict] = []
+
+    def fake_api(*, access_token, method, path, payload=None):
+        sent.append({"path": path, "payload": payload})
+        return {"id": "MLB1"}
+
+    monkeypatch.setattr(service, "mercado_livre_api_request", fake_api)
+
+    service.publish_mercado_livre_item(store, product_payload, project)
+
+    item_post = next(p for p in sent if p["path"] == "/items")
+    for var in item_post["payload"].get("variations", []):
+        assert "picture_ids" in var, "cada variação deve ter picture_ids"
+        assert var["picture_ids"] == ["ML_P1", "ML_P2"], "picture_ids deve conter todos os IDs uploadados"
+
+
+
     """Description endpoint failure must NOT raise — it should be silently ignored."""
     service = StoreService()
     project = _make_fake_project(tmp_path)

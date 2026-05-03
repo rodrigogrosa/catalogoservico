@@ -749,6 +749,17 @@ class StoreService:
         elif not product_payload.get("pictures"):
             pass  # no pictures available at all
 
+        # ML requires every variation to have picture_ids when pictures are present.
+        # Assign all uploaded picture IDs to each variation.
+        uploaded_pictures: list[dict[str, str]] = list(product_payload.get("pictures") or [])
+        if uploaded_pictures and product_payload.get("variations"):
+            picture_ids = [p["id"] for p in uploaded_pictures if p.get("id")]
+            if picture_ids:
+                product_payload["variations"] = [
+                    {**v, "picture_ids": picture_ids}
+                    for v in product_payload["variations"]
+                ]
+
         item_payload = {
             key: value
             for key, value in product_payload.items()
