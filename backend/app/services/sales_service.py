@@ -180,22 +180,14 @@ bullet_points deve ter no maximo 5 itens. hashtags deve ter no maximo 10 itens.
         return f"SM3D-{clean.upper()}-001"
 
     def _default_variations(self, base_sku: str, unit_price: float) -> list[dict[str, Any]]:
-        """Return 2 standard variations: 1 unit and a pack of 10 (10% bulk discount)."""
+        """Return 1 standard variation: kit of 10 pieces (10% bulk discount), stock=320."""
         pack_price = round(unit_price * 10 * 0.90, 2)
         return [
-            {
-                "sku": f"{base_sku}-UN1",
-                "name": "1 unidade",
-                "quantity": 1,
-                "stock": 100,
-                "price_brl": unit_price,
-                "description": "Peça individual — cor conforme disponibilidade (consulte antes).",
-            },
             {
                 "sku": f"{base_sku}-KIT10",
                 "name": "Kit 10 unidades (10% desconto)",
                 "quantity": 10,
-                "stock": 100,
+                "stock": 320,
                 "price_brl": pack_price,
                 "description": "Lote de 10 peças iguais ou em cores variadas — 10% de desconto sobre o unitário.",
             },

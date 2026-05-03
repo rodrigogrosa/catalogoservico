@@ -77,6 +77,30 @@ class MarketplaceAttribute(BaseModel):
     hashtags: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
     required_fields: list[str] = Field(default_factory=list)
+    sku: str | None = None
+    default_stock: int | None = None
+    warranty: dict[str, Any] | None = None
+
+
+class SalesProfileWarranty(BaseModel):
+    type: str = "seller"
+    duration: int = 1
+    unit: str = "months"
+    label: str = "1 mês — garantia do vendedor"
+
+
+class SalesProfileVariation(BaseModel):
+    sku: str
+    name: str
+    quantity: int = 1
+    stock: int = 320
+    price_brl: float
+    description: str | None = None
+
+
+class SalesProfileExtraPhoto(BaseModel):
+    label: str
+    path: str
 
 
 class SalesProfile(BaseModel):
@@ -93,6 +117,13 @@ class SalesProfile(BaseModel):
     assumptions: list[str] = Field(default_factory=list)
     sales_tips: list[str] = Field(default_factory=list)
     marketplace_attributes: list[MarketplaceAttribute] = Field(default_factory=list)
+    sku: str | None = None
+    default_stock: int | None = None
+    warranty: SalesProfileWarranty | None = None
+    variations: list[SalesProfileVariation] = Field(default_factory=list)
+    photo_label_overrides: dict[str, str] = Field(default_factory=dict)
+    hidden_photo_paths: list[str] = Field(default_factory=list)
+    extra_ad_photos: list[SalesProfileExtraPhoto] = Field(default_factory=list)
 
 
 class InputFileRecord(BaseModel):

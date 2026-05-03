@@ -136,13 +136,15 @@ export function SalesProductDetail({ project }: Props) {
     setSalesDraft((prev) => {
       if (!prev) return prev;
       const base = prev.sku ?? "SM3D-NOVO";
+      const unitPrice = prev.suggested_price_50_margin_brl;
+      const kitIdx = (prev.variations?.filter((v) => v.sku.includes("-KIT")).length ?? 0) + 1;
       const newVar: SalesProfileVariation = {
-        sku: `${base}-UN${(prev.variations?.length ?? 0) + 1}`,
-        name: "Nova variação",
-        quantity: 1,
-        stock: 100,
-        price_brl: prev.suggested_price_50_margin_brl,
-        description: "",
+        sku: `${base}-KIT${kitIdx === 1 ? "10" : kitIdx * 10}`,
+        name: "Kit 10 unidades (10% desconto)",
+        quantity: 10,
+        stock: 320,
+        price_brl: Math.round(unitPrice * 10 * 0.9 * 100) / 100,
+        description: "Lote de 10 peças iguais ou em cores variadas — 10% de desconto sobre o unitário.",
       };
       return { ...prev, variations: [...(prev.variations ?? []), newVar] };
     });
@@ -990,7 +992,7 @@ function PhotoDownloadPanel({
           <h2 className="mt-2 text-2xl font-semibold text-slate-950">Imagens prontas para marketplace</h2>
           <p className="mt-2 text-sm leading-6 text-slate-600">
             {editing
-              ? "Edite o rótulo, oculte ou adicione fotos extras por URL. As alterações são salvas junto com a ficha."
+              ? "Edite o rótulo, exclua ou adicione fotos extras por URL. As alterações são salvas junto com a ficha."
               : "Baixe a imagem principal e os previews gerados para usar no Mercado Livre, Shopee, Instagram e catálogo próprio."}
           </p>
         </div>
@@ -1016,11 +1018,11 @@ function PhotoDownloadPanel({
                 {editing ? (
                   <button
                     type="button"
-                    title="Ocultar esta foto do anúncio"
+                    title="Excluir esta foto do anúncio"
                     onClick={() => onHidePhoto?.(photo.href)}
                     className="absolute right-2 top-2 rounded-full bg-red-600 px-2 py-1 text-xs font-semibold text-white shadow hover:bg-red-700"
                   >
-                    Ocultar
+                    Excluir
                   </button>
                 ) : null}
               </div>
@@ -1063,26 +1065,7 @@ function PhotoDownloadPanel({
         </div>
       )}
 
-      {/* ── Hidden photos (show-back buttons) ─────────────────────────── */}
-      {editing && hiddenPaths.length > 0 ? (
-        <div className="mt-5 rounded-[1.3rem] border border-orange-200 bg-orange-50 p-4">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-orange-700">Fotos ocultadas do anúncio</p>
-          <div className="mt-3 space-y-2">
-            {hiddenPaths.map((path) => (
-              <div key={path} className="flex items-center gap-3 rounded-[0.8rem] bg-white p-3">
-                <span className="flex-1 break-all text-xs text-slate-600">{path.split("/").pop()}</span>
-                <button
-                  type="button"
-                  onClick={() => onShowPhoto?.(path)}
-                  className="rounded-full border border-orange-300 px-3 py-1.5 text-xs font-semibold text-orange-700 hover:bg-orange-100"
-                >
-                  Mostrar novamente
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-      ) : null}
+      {/* hidden photos are excluded from display; no restore UI — cancel editing reverts all */}
 
       {/* ── Extra photos (user-added) ──────────────────────────────────── */}
       {extraPhotos.length > 0 ? (
