@@ -69,6 +69,11 @@ export type SalesProfileWarranty = {
   label: string;
 };
 
+export type SalesProfileExtraPhoto = {
+  label: string;
+  path: string;
+};
+
 export type SalesProfile = {
   pricing_version: string;
   copy_source: string;
@@ -76,6 +81,10 @@ export type SalesProfile = {
   default_stock?: number | null;
   warranty?: SalesProfileWarranty | null;
   variations?: SalesProfileVariation[] | null;
+  // Photo ad overrides — stored here so project.previews stays untouched.
+  photo_label_overrides?: Record<string, string> | null;  // path → custom label
+  hidden_photo_paths?: string[] | null;                   // paths hidden from ad
+  extra_ad_photos?: SalesProfileExtraPhoto[] | null;      // user-added photos by URL
   estimated_material_g: number;
   estimated_print_hours: number;
   estimated_base_cost_brl: number;

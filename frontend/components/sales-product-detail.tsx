@@ -15,6 +15,7 @@ import {
   type ProductPublishDraft,
   type ProjectDetail,
   type SalesProfile,
+  type SalesProfileExtraPhoto,
   type SalesProfileVariation,
   type StoreIntegration,
 } from "@/lib/api";
@@ -63,7 +64,10 @@ export function SalesProductDetail({ project }: Props) {
   // active display data — in edit mode show draft values
   const activeSales = editing ? salesDraft : sales;
   const channels = useMemo(() => activeSales?.marketplace_attributes ?? [], [activeSales]);
-  const adPhotos = useMemo(() => collectAdPhotos(localProject), [localProject]);
+  const adPhotos = useMemo(
+    () => collectAdPhotos(localProject, activeSales?.photo_label_overrides ?? null, activeSales?.hidden_photo_paths ?? null, activeSales?.extra_ad_photos ?? null),
+    [localProject, activeSales],
+  );
   const primary = channels[0];
 
   const publicationStores = useMemo(
@@ -538,7 +542,34 @@ export function SalesProductDetail({ project }: Props) {
         </div>
       </section>
 
-      <PhotoDownloadPanel photos={adPhotos} projectName={project.name} />
+      <PhotoDownloadPanel
+        photos={adPhotos}
+        projectName={localProject.name}
+        editing={editing}
+        labelOverrides={salesDraft?.photo_label_overrides ?? {}}
+        hiddenPaths={salesDraft?.hidden_photo_paths ?? []}
+        extraPhotos={salesDraft?.extra_ad_photos ?? []}
+        onUpdateLabel={(path, label) =>
+          setSalesField("photo_label_overrides", { ...(salesDraft?.photo_label_overrides ?? {}), [path]: label })
+        }
+        onHidePhoto={(path) =>
+          setSalesField("hidden_photo_paths", [...new Set([...(salesDraft?.hidden_photo_paths ?? []), path])])
+        }
+        onShowPhoto={(path) =>
+          setSalesField("hidden_photo_paths", (salesDraft?.hidden_photo_paths ?? []).filter((p) => p !== path))
+        }
+        onAddPhoto={(photo) =>
+          setSalesField("extra_ad_photos", [...(salesDraft?.extra_ad_photos ?? []), photo])
+        }
+        onRemoveExtra={(idx) =>
+          setSalesField("extra_ad_photos", (salesDraft?.extra_ad_photos ?? []).filter((_, i) => i !== idx))
+        }
+        onUpdateExtra={(idx, updates) => {
+          const arr = [...(salesDraft?.extra_ad_photos ?? [])];
+          arr[idx] = { ...arr[idx], ...updates };
+          setSalesField("extra_ad_photos", arr);
+        }}
+      />
 
       <StorePublicationPanel
         canPublish={can(PERMISSIONS.storesPublish)}
@@ -886,8 +917,38 @@ type AdPhoto = {
 
 const MAX_AD_PHOTOS = 5;
 
-function PhotoDownloadPanel({ photos, projectName }: { photos: AdPhoto[]; projectName: string }) {
+type PhotoDownloadPanelProps = {
+  photos: AdPhoto[];
+  projectName: string;
+  editing?: boolean;
+  labelOverrides?: Record<string, string>;
+  hiddenPaths?: string[];
+  extraPhotos?: SalesProfileExtraPhoto[];
+  onUpdateLabel?: (path: string, label: string) => void;
+  onHidePhoto?: (path: string) => void;
+  onShowPhoto?: (path: string) => void;
+  onAddPhoto?: (photo: SalesProfileExtraPhoto) => void;
+  onRemoveExtra?: (idx: number) => void;
+  onUpdateExtra?: (idx: number, updates: Partial<SalesProfileExtraPhoto>) => void;
+};
+
+function PhotoDownloadPanel({
+  photos,
+  projectName,
+  editing = false,
+  labelOverrides = {},
+  hiddenPaths = [],
+  extraPhotos = [],
+  onUpdateLabel,
+  onHidePhoto,
+  onShowPhoto,
+  onAddPhoto,
+  onRemoveExtra,
+  onUpdateExtra,
+}: PhotoDownloadPanelProps) {
   const [status, setStatus] = useState<string | null>(null);
+  const [newPhotoUrl, setNewPhotoUrl] = useState("");
+  const [newPhotoLabel, setNewPhotoLabel] = useState("");
 
   async function downloadPhoto(photo: AdPhoto) {
     try {
@@ -911,6 +972,16 @@ function PhotoDownloadPanel({ photos, projectName }: { photos: AdPhoto[]; projec
     }
   }
 
+  function handleAddPhoto() {
+    const url = newPhotoUrl.trim();
+    if (!url) return;
+    onAddPhoto?.({ label: newPhotoLabel.trim() || url.split("/").pop() || "foto-extra", path: url });
+    setNewPhotoUrl("");
+    setNewPhotoLabel("");
+  }
+
+  const hiddenSet = new Set(hiddenPaths);
+
   return (
     <section className="panel p-5 md:p-6">
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
@@ -918,48 +989,182 @@ function PhotoDownloadPanel({ photos, projectName }: { photos: AdPhoto[]; projec
           <p className="section-kicker">Fotos para anúncio</p>
           <h2 className="mt-2 text-2xl font-semibold text-slate-950">Imagens prontas para marketplace</h2>
           <p className="mt-2 text-sm leading-6 text-slate-600">
-            Baixe a imagem principal e os previews gerados para usar no Mercado Livre, Shopee, Instagram e catálogo próprio.
+            {editing
+              ? "Edite o rótulo, oculte ou adicione fotos extras por URL. As alterações são salvas junto com a ficha."
+              : "Baixe a imagem principal e os previews gerados para usar no Mercado Livre, Shopee, Instagram e catálogo próprio."}
           </p>
         </div>
         {status ? <span className="pill">{status}</span> : <span className="pill">{photos.length} imagens</span>}
       </div>
 
-      {photos.length === 0 ? (
+      {/* ── Active photos ─────────────────────────────────────────────── */}
+      {photos.length === 0 && !editing ? (
         <div className="mt-5 rounded-[1.3rem] border border-slate-900/10 bg-white p-5 text-sm leading-6 text-slate-600">
           Nenhuma imagem de anúncio foi encontrada para este produto. Gere previews no processamento do projeto antes de publicar.
         </div>
       ) : (
         <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {photos.map((photo, index) => (
-            <article key={`${photo.href}-${photo.label}`} className="overflow-hidden rounded-[1.4rem] border border-slate-900/10 bg-white shadow-sm">
-              <div className="aspect-[4/3] bg-slate-100">
+            <article
+              key={`${photo.href}-${photo.label}`}
+              className={`overflow-hidden rounded-[1.4rem] border bg-white shadow-sm ${
+                editing ? "border-blue-200" : "border-slate-900/10"
+              }`}
+            >
+              <div className="aspect-[4/3] bg-slate-100 relative">
                 <img src={photo.href} alt={`${projectName} - ${photo.label}`} className="h-full w-full object-cover" loading="lazy" />
+                {editing ? (
+                  <button
+                    type="button"
+                    title="Ocultar esta foto do anúncio"
+                    onClick={() => onHidePhoto?.(photo.href)}
+                    className="absolute right-2 top-2 rounded-full bg-red-600 px-2 py-1 text-xs font-semibold text-white shadow hover:bg-red-700"
+                  >
+                    Ocultar
+                  </button>
+                ) : null}
               </div>
               <div className="space-y-3 p-4">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Imagem {index + 1}</p>
-                  <h3 className="mt-1 text-sm font-semibold text-slate-950">{photo.label}</h3>
+                  {editing ? (
+                    <input
+                      value={labelOverrides[photo.href] ?? photo.label}
+                      onChange={(e) => onUpdateLabel?.(photo.href, e.target.value)}
+                      className="mt-1 w-full rounded-[0.7rem] border border-blue-300 px-2 py-1.5 text-sm font-semibold text-slate-950 outline-none focus:border-blue-500"
+                      placeholder="Rótulo da foto"
+                    />
+                  ) : (
+                    <h3 className="mt-1 text-sm font-semibold text-slate-950">{photo.label}</h3>
+                  )}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => downloadPhoto(photo)}
-                  className="w-full rounded-full bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-orange-700"
-                >
-                  Baixar foto
-                </button>
-                <a
-                  href={photo.href}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="block text-center text-xs font-semibold text-slate-500 underline"
-                >
-                  Abrir original
-                </a>
+                {!editing ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => downloadPhoto(photo)}
+                      className="w-full rounded-full bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-orange-700"
+                    >
+                      Baixar foto
+                    </button>
+                    <a
+                      href={photo.href}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="block text-center text-xs font-semibold text-slate-500 underline"
+                    >
+                      Abrir original
+                    </a>
+                  </>
+                ) : null}
               </div>
             </article>
           ))}
         </div>
       )}
+
+      {/* ── Hidden photos (show-back buttons) ─────────────────────────── */}
+      {editing && hiddenPaths.length > 0 ? (
+        <div className="mt-5 rounded-[1.3rem] border border-orange-200 bg-orange-50 p-4">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-orange-700">Fotos ocultadas do anúncio</p>
+          <div className="mt-3 space-y-2">
+            {hiddenPaths.map((path) => (
+              <div key={path} className="flex items-center gap-3 rounded-[0.8rem] bg-white p-3">
+                <span className="flex-1 break-all text-xs text-slate-600">{path.split("/").pop()}</span>
+                <button
+                  type="button"
+                  onClick={() => onShowPhoto?.(path)}
+                  className="rounded-full border border-orange-300 px-3 py-1.5 text-xs font-semibold text-orange-700 hover:bg-orange-100"
+                >
+                  Mostrar novamente
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {/* ── Extra photos (user-added) ──────────────────────────────────── */}
+      {extraPhotos.length > 0 ? (
+        <div className="mt-5">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Fotos extras adicionadas</p>
+          <div className="mt-3 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            {extraPhotos.map((ep, idx) => (
+              <article key={idx} className="overflow-hidden rounded-[1.4rem] border border-blue-200 bg-white shadow-sm">
+                <div className="aspect-[4/3] bg-slate-100">
+                  <img src={ep.path} alt={ep.label} className="h-full w-full object-cover" loading="lazy" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+                </div>
+                <div className="space-y-3 p-4">
+                  {editing ? (
+                    <>
+                      <input
+                        value={ep.label}
+                        onChange={(e) => onUpdateExtra?.(idx, { label: e.target.value })}
+                        className="w-full rounded-[0.7rem] border border-blue-300 px-2 py-1.5 text-sm font-semibold text-slate-950 outline-none focus:border-blue-500"
+                        placeholder="Rótulo"
+                      />
+                      <input
+                        value={ep.path}
+                        onChange={(e) => onUpdateExtra?.(idx, { path: e.target.value })}
+                        className="w-full rounded-[0.7rem] border border-blue-300 px-2 py-1 text-xs text-slate-700 outline-none focus:border-blue-500"
+                        placeholder="URL da imagem"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => onRemoveExtra?.(idx)}
+                        className="w-full rounded-full border border-red-200 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50"
+                      >
+                        Remover
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <h3 className="text-sm font-semibold text-slate-950">{ep.label}</h3>
+                      <button
+                        type="button"
+                        onClick={() => downloadPhoto({ label: ep.label, href: ep.path, filename: `${safeFileName(ep.label)}.jpg` })}
+                        className="w-full rounded-full bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-orange-700"
+                      >
+                        Baixar foto
+                      </button>
+                    </>
+                  )}
+                </div>
+              </article>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {/* ── Add photo by URL ───────────────────────────────────────────── */}
+      {editing ? (
+        <div className="mt-5 rounded-[1.3rem] border border-blue-200 bg-blue-50 p-5">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-700">Adicionar foto por URL</p>
+          <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_0.4fr_auto]">
+            <input
+              value={newPhotoUrl}
+              onChange={(e) => setNewPhotoUrl(e.target.value)}
+              placeholder="https://... (URL pública da imagem)"
+              className="rounded-[0.8rem] border border-blue-300 bg-white px-4 py-2.5 text-sm text-slate-950 outline-none focus:border-blue-500"
+            />
+            <input
+              value={newPhotoLabel}
+              onChange={(e) => setNewPhotoLabel(e.target.value)}
+              placeholder="Rótulo (opcional)"
+              className="rounded-[0.8rem] border border-blue-300 bg-white px-4 py-2.5 text-sm text-slate-950 outline-none focus:border-blue-500"
+            />
+            <button
+              type="button"
+              onClick={handleAddPhoto}
+              disabled={!newPhotoUrl.trim()}
+              className="rounded-full bg-blue-700 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-800 disabled:opacity-50"
+            >
+              Adicionar
+            </button>
+          </div>
+          <p className="mt-2 text-xs text-blue-700">A URL deve ser pública e acessível. JPG, PNG e WebP são suportados.</p>
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -1316,15 +1521,24 @@ function ArtifactPanel({ title, items }: { title: string; items: ArtifactReferen
   );
 }
 
-function collectAdPhotos(project: ProjectDetail): AdPhoto[] {
+function collectAdPhotos(
+  project: ProjectDetail,
+  labelOverrides: Record<string, string> | null = null,
+  hiddenPaths: string[] | null = null,
+  extraPhotos: SalesProfileExtraPhoto[] | null = null,
+): AdPhoto[] {
+  const hiddenSet = new Set(hiddenPaths ?? []);
+  const overrides = labelOverrides ?? {};
   const raw: Array<{ label: string; href: string; filename: string; score: number; signature: string }> = [];
   const addPhoto = (label: string, path?: string | null) => {
     const href = fileUrl(path);
     if (!href || !/\.(png|jpe?g|webp)(\?.*)?$/i.test(href)) return;
+    if (hiddenSet.has(href)) return;
+    const effectiveLabel = overrides[href] ?? label;
     raw.push({
-      label,
+      label: effectiveLabel,
       href,
-      filename: `${safeFileName(project.name)}_${safeFileName(label)}.${extensionFromUrl(href)}`,
+      filename: `${safeFileName(project.name)}_${safeFileName(effectiveLabel)}.${extensionFromUrl(href)}`,
       score: adPhotoScore(label, href),
       signature: normalizePhotoSignature(label, href),
     });
