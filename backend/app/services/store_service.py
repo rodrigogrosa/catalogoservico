@@ -1353,11 +1353,10 @@ class StoreService:
                 category_id = str(payload[0].get("category_id", "")).strip()
                 if category_id:
                     return category_id
-        # Fallback: MLB186814 = Estatuetas (Casa > Enfeites e Decoração da Casa >
-        # Figuras Decorativas > Estatuetas) — melhor default para enfeites 3D impressos.
-        # MATERIAL nessa categoria é value_type:string sem restricted_values,
-        # portanto "Plástico" como valor livre é aceito mesmo não estando na lista de sugestões.
-        return "MLB186814"
+        # Fallback: MLB439316 = Chaveiros (Indústria e Comércio > Publicidade e
+        # Promoção > Merchandising > Chaveiros) — produto principal desta loja.
+        # Tem MATERIAL com opção "Plástico", EMPTY_GTIN_REASON, variações de cor, etc.
+        return "MLB439316"
 
     def build_mercado_livre_prediction_queries(self, project: dict[str, Any], title: str, channel: dict[str, Any]) -> list[str]:
         project_name = str(project.get("name") or "").strip()
@@ -1365,41 +1364,35 @@ class StoreService:
         marketplace_category = str(channel.get("category") or "").strip().lower()
         lowered = " ".join(part for part in [title.lower(), project_name.lower(), marketplace_category] if part)
         queries = [title, project_name, str(channel.get("category") or "").strip()]
-        if "chaveiro" in lowered or "porta chaves" in lowered or "keychain" in lowered:
+        _decoration_terms = [
+            "decorativo", "estatueta", "escultura", "enfeite", "ornamento",
+            "miniatura", "figura decorativa", "parrot", "papagaio",
+        ]
+        _is_decoration = any(term in lowered for term in _decoration_terms)
+        _is_mask = "máscara" in lowered or "mascara" in lowered or "helmet" in lowered or "capacete" in lowered
+        _is_keychain = "chaveiro" in lowered or "porta chaves" in lowered or "keychain" in lowered
+        name_for_query = project_name or title
+        if _is_mask:
             queries = [
-                f"{project_name or title} chaveiro impresso em 3d",
-                "chaveiro impresso em 3d",
+                f"{name_for_query} decoração cosplay",
+                f"máscara decorativa {name_for_query}",
                 *queries,
             ]
-        elif "máscara" in lowered or "mascara" in lowered or "helmet" in lowered or "capacete" in lowered:
+        elif _is_decoration and not _is_keychain:
+            # Produto claramente decorativo (estatueta, enfeite, escultura...)
             queries = [
-                f"{project_name or title} decoração cosplay",
-                f"máscara decorativa {project_name or title}",
+                f"{name_for_query} estatueta decorativa impresso em 3d",
+                f"figura decorativa {name_for_query}",
                 *queries,
             ]
         else:
-            # Default: enfeite 3D decorativo → MLB186814 (Estatuetas)
-            # Colocar queries de decoração antes do título genérico para que o
-            # domain_discovery retorne sempre uma categoria de enfeites.
-            _decoration_terms = [
-                "parrot", "papagaio", "bird", "pássaro", "passaro",
-                "decorativo", "estatueta", "animal", "miniatura", "figura",
-                "boneco", "personagem", "escultura", "enfeite", "ornamento",
+            # Default: chaveiro impresso em 3D — produto principal desta loja.
+            # Inclui: chaveiros explícitos, personagens, animais, itens sem categoria clara.
+            queries = [
+                f"{name_for_query} chaveiro impresso em 3d",
+                "chaveiro impresso em 3d personalizado",
+                *queries,
             ]
-            name_for_query = project_name or title
-            if any(term in lowered for term in _decoration_terms):
-                queries = [
-                    f"{name_for_query} estatueta decorativa impresso em 3d",
-                    f"figura decorativa {name_for_query}",
-                    *queries,
-                ]
-            else:
-                # Item genérico — forçar categoria de enfeites 3D
-                queries = [
-                    f"{name_for_query} enfeite decorativo impresso em 3d",
-                    f"estatueta decorativa impresso em 3d {name_for_query}",
-                    *queries,
-                ]
         assumptions = sales.get("assumptions", [])
         if any("Chaveiro / brinde pequeno" in str(item) for item in assumptions):
             queries.insert(0, "chaveiro impresso em 3d")

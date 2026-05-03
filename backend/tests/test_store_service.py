@@ -707,9 +707,9 @@ def test_build_mercado_livre_attributes_gtin_uses_empty_reason_not_free_text(mon
     assert by_id["EMPTY_GTIN_REASON"].get("value_id") == "7711003"
 
 
-def test_predict_category_fallback_returns_estatuetas_for_decorations() -> None:
+def test_predict_category_fallback_returns_chaveiros_when_offline() -> None:
     """Quando o domain_discovery falha para todas as queries (sem rede ou sem resultado),
-    o fallback deve ser MLB186814 (Estatuetas — enfeites e decoração da casa),
+    o fallback deve ser MLB439316 (Chaveiros — produto principal desta loja),
     nunca string vazia (que causaria category_id inválido no payload ML)."""
     service = StoreService()
     # Force all HTTP calls to fail → simulates offline or no results scenario
@@ -722,29 +722,37 @@ def test_predict_category_fallback_returns_estatuetas_for_decorations() -> None:
     _urllib_request.urlopen = failing_urlopen  # type: ignore[assignment]
     try:
         store = {"settings": {"site_id": "MLB"}}
-        project = {"name": "Personagem Decorativo", "metadata": {}, "sales_profile": {}}
-        result = service.predict_mercado_livre_category_id(store, project, "Personagem Decorativo", {})
+        project = {"name": "Homem de Ferro", "metadata": {}, "sales_profile": {}}
+        result = service.predict_mercado_livre_category_id(store, project, "Homem de Ferro", {})
     finally:
         _urllib_request.urlopen = original_urlopen  # type: ignore[assignment]
 
-    assert result == "MLB186814", (
-        "Fallback de categoria deve ser MLB186814 (Estatuetas / enfeites 3D), "
+    assert result == "MLB439316", (
+        "Fallback de categoria deve ser MLB439316 (Chaveiros — produto principal), "
         f"mas retornou: {result!r}"
     )
 
 
-def test_prediction_queries_default_includes_decoration_terms() -> None:
-    """Queries padrão (item genérico, não chaveiro/máscara) devem incluir termos
-    de 'enfeite decorativo' para que o domain_discovery retorne categorias de
-    enfeites e decoração da casa (MLB186814) e não categorias aleatórias."""
+def test_prediction_queries_generic_item_defaults_to_chaveiro() -> None:
+    """Item genérico (sem termos de decoração/máscara no nome) deve gerar queries
+    de chaveiro para que o domain_discovery retorne MLB439316 (Chaveiros)."""
     service = StoreService()
-    project = {"name": "Guerreiro Medieval", "metadata": {}, "sales_profile": {}}
-    queries = service.build_mercado_livre_prediction_queries(project, "Guerreiro Medieval", {})
+    project = {"name": "Homem de Ferro", "metadata": {}, "sales_profile": {}}
+    queries = service.build_mercado_livre_prediction_queries(project, "Homem de Ferro", {})
 
     queries_lower = [q.lower() for q in queries]
-    # At least one query must contain decoration-related words so domain_discovery
-    # routes to the decorations category (MLB186814)
-    decoration_words = {"enfeite", "decorativ", "estatueta", "figura", "impresso"}
-    assert any(
-        any(word in q for word in decoration_words) for q in queries_lower
-    ), f"Nenhuma query contém termos de decoração: {queries}"
+    assert any("chaveiro" in q for q in queries_lower), (
+        f"Queries para item genérico devem incluir 'chaveiro': {queries}"
+    )
+
+
+def test_prediction_queries_decoration_item_uses_estatueta_queries() -> None:
+    """Item com termos de decoração explícita deve gerar queries de estatueta."""
+    service = StoreService()
+    project = {"name": "Estatueta Decorativa", "metadata": {}, "sales_profile": {}}
+    queries = service.build_mercado_livre_prediction_queries(project, "Estatueta Decorativa", {})
+
+    queries_lower = [q.lower() for q in queries]
+    assert any("estatueta" in q or "decorativ" in q for q in queries_lower), (
+        f"Queries para item de decoração devem incluir 'estatueta'/'decorativ': {queries}"
+    )
