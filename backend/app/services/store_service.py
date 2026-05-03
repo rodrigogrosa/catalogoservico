@@ -1028,7 +1028,10 @@ class StoreService:
         theme = self.infer_sculpture_theme(project, channel)
         character = self.infer_character_name(project, channel)
         with_base = self.infer_with_base(project)
-        values_by_id = {
+        includes_hook = self.infer_includes_hook(project, channel)
+        color = self.infer_color(project, channel)
+        pattern_name = self.infer_pattern_name(project, channel)
+        values_by_id: dict[str, Any] = {
             "BRAND": "Genérica",
             "MANUFACTURER": manufacturer,
             "MODEL": model_name,
@@ -1038,6 +1041,10 @@ class StoreService:
             "ARTWORK_TYPE": "Réplica",
             "CHARACTER": character,
         }
+        if color:
+            values_by_id["COLOR"] = color
+        if pattern_name:
+            values_by_id["PATTERN_NAME"] = pattern_name
         normalized: list[dict[str, Any]] = []
         for attribute_id in required_ids:
             attribute = by_id.get(attribute_id) or {}
@@ -1046,12 +1053,26 @@ class StoreService:
                 continue
             normalized.append(self.build_mercado_livre_attribute(attribute, value_name=value_name[:255]))
 
-        optional_ids = ["SCULPTURE_THEME", "SCULPTURE_TYPE", "ARTWORK_TYPE", "CHARACTER", "LENGTH", "WIDTH", "HEIGHT", "WEIGHT", "WITH_BASE"]
+        # All optional attributes we want to proactively fill.
+        # IDs confirmed via GET /categories/MLB439316/attributes on 2026-05-03.
+        optional_ids = [
+            "MATERIAL",
+            "COLOR",
+            "PATTERN_NAME",
+            "SCULPTURE_THEME", "SCULPTURE_TYPE", "ARTWORK_TYPE", "CHARACTER",
+            "LENGTH", "WIDTH", "HEIGHT", "WEIGHT",
+            "WITH_BASE",
+            "INCLUDES_HOOK",   # Inclui gancho
+            "INCLUDES_STRAP",  # Inclui correia
+            "PIECES_NUMBER",   # Quantidade de peças
+            "MIN_RECOMMENDED_AGE",  # Idade mínima recomendada
+        ]
         seen_ids = {item["id"] for item in normalized if item.get("id")}
         for attribute_id in optional_ids:
-            if attribute_id in seen_ids or attribute_id not in by_id:
+            if attribute_id in seen_ids:
                 continue
-            attribute = by_id[attribute_id]
+            # Build a stub attribute dict if the category API returned empty (network failure).
+            attribute = by_id.get(attribute_id) or {"id": attribute_id, "name": attribute_id}
             if attribute_id == "LENGTH" and dimensions_cm:
                 normalized.append(self.build_mercado_livre_attribute(attribute, number=dimensions_cm[2], unit="cm"))
             elif attribute_id == "WIDTH" and dimensions_cm:
@@ -1062,6 +1083,14 @@ class StoreService:
                 normalized.append(self.build_mercado_livre_attribute(attribute, number=weight_g, unit="g"))
             elif attribute_id == "WITH_BASE":
                 normalized.append(self.build_mercado_livre_attribute(attribute, boolean_value=with_base))
+            elif attribute_id == "INCLUDES_HOOK":
+                normalized.append(self.build_mercado_livre_attribute(attribute, boolean_value=includes_hook))
+            elif attribute_id == "INCLUDES_STRAP":
+                normalized.append(self.build_mercado_livre_attribute(attribute, boolean_value=False))
+            elif attribute_id == "PIECES_NUMBER":
+                normalized.append(self.build_mercado_livre_attribute(attribute, number=1.0, unit=None))
+            elif attribute_id == "MIN_RECOMMENDED_AGE":
+                normalized.append(self.build_mercado_livre_attribute(attribute, number=3.0, unit="anos"))
             else:
                 value_name = str(values_by_id.get(attribute_id, "")).strip()
                 if value_name:
@@ -1095,9 +1124,12 @@ class StoreService:
                 return payload
             payload["value_name"] = "Sim" if boolean_value else "Não"
             return payload
-        if number is not None and unit:
-            payload["value_struct"] = {"number": round(float(number), 2), "unit": unit}
-            payload["value_name"] = f"{round(float(number), 2):g} {unit}"
+        if number is not None:
+            if unit:
+                payload["value_struct"] = {"number": round(float(number), 2), "unit": unit}
+                payload["value_name"] = f"{round(float(number), 2):g} {unit}"
+            else:
+                payload["value_name"] = f"{round(float(number), 2):g}"
             return payload
         text = (value_name or "").strip()
         if text:
@@ -1116,13 +1148,76 @@ class StoreService:
                 return option
         return None
 
+    # Maps raw material names (from 3D slicers / assumptions) to ML option names.
+    # ML category MLB439316 has: Aço, Plástico, Prata — all 3D printed items are Plástico.
+    _MATERIAL_TO_ML: dict[str, str] = {
+        "pla": "Plástico",
+        "petg": "Plástico",
+        "abs": "Plástico",
+        "tpu": "Plástico",
+        "nylon": "Plástico",
+        "pc": "Plástico",
+        "asa": "Plástico",
+        "hips": "Plástico",
+        "resin": "Plástico",
+        "resina": "Plástico",
+        "plastic": "Plástico",
+        "plástico": "Plástico",
+        "metal": "Aço",
+        "steel": "Aço",
+        "aço": "Aço",
+        "silver": "Prata",
+        "prata": "Prata",
+    }
+
     def infer_material_name(self, project: dict[str, Any]) -> str:
         sales = project.get("sales_profile") or {}
+        raw = "PLA"
         for assumption in sales.get("assumptions", []):
             text = str(assumption)
             if "Material assumido:" in text:
-                return text.split("Material assumido:", 1)[1].split(".", 1)[0].strip() or "PLA"
-        return "PLA"
+                raw = text.split("Material assumido:", 1)[1].split(".", 1)[0].strip() or "PLA"
+                break
+        return self._MATERIAL_TO_ML.get(raw.lower(), raw)
+
+    def infer_includes_hook(self, project: dict[str, Any], channel: dict[str, Any]) -> bool:
+        """Keychains include a hook by default; other items don't."""
+        haystack = " ".join([
+            str(project.get("name") or ""),
+            str(channel.get("title") or ""),
+            str(channel.get("category") or ""),
+        ]).lower()
+        return any(term in haystack for term in ["chaveiro", "keychain", "key chain", "gancho", "hook"])
+
+    def infer_color(self, project: dict[str, Any], channel: dict[str, Any]) -> str:
+        """Return a color name if inferable from the project, otherwise empty string."""
+        sales = project.get("sales_profile") or {}
+        # Use first variation name as color hint when available
+        variations = list(sales.get("variations") or [])
+        if variations and isinstance(variations[0], dict):
+            name = str(variations[0].get("name") or "").strip()
+            if name and len(name) <= 50:
+                return name
+        return ""
+
+    def infer_pattern_name(self, project: dict[str, Any], channel: dict[str, Any]) -> str:
+        """Return ML PATTERN_NAME from project name if it matches a known character."""
+        haystack = " ".join([
+            str(project.get("name") or ""),
+            str(channel.get("title") or ""),
+        ]).lower()
+        known = [
+            ("homem de ferro", "Homem de Ferro"),
+            ("iron man", "Homem de Ferro"),
+            ("batman", "Batman"),
+            ("spider-man", "Homem-Aranha"), ("homem aranha", "Homem-Aranha"),
+            ("hulk", "Hulk"),
+            ("darth vader", "Darth Vader"),
+        ]
+        for keyword, ml_name in known:
+            if keyword in haystack:
+                return ml_name
+        return ""
 
     def infer_dimensions_cm(self, project: dict[str, Any]) -> tuple[float, float, float] | None:
         mesh_metrics = project.get("metadata", {}).get("mesh_metrics", {})
@@ -1172,12 +1267,10 @@ class StoreService:
         return ""
 
     def infer_with_base(self, project: dict[str, Any]) -> bool:
-        haystack = " ".join(
-            [
-                str(project.get("name") or ""),
-                str(project.get("original_filename") or ""),
-            ]
-        ).lower()
+        haystack = " ".join([
+            str(project.get("name") or ""),
+            str(project.get("original_filename") or ""),
+        ]).lower()
         return any(term in haystack for term in ["base", "stand", "pedestal", "plinth", "suporte"])
 
     def fetch_mercado_livre_category_attributes(self, category_id: str) -> list[dict[str, Any]]:

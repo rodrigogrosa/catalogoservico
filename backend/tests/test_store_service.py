@@ -547,7 +547,7 @@ def test_build_mercado_livre_attributes_fills_secondary_sculpture_fields(monkeyp
     attributes = service.build_mercado_livre_attributes("MLB186814", project, channel)
     by_id = {item["id"]: item for item in attributes}
 
-    assert by_id["MATERIAL"]["value_name"] == "PLA"
+    assert by_id["MATERIAL"]["value_name"] == "Plástico"
     assert by_id["SCULPTURE_THEME"]["value_name"] == "Animais"
     assert by_id["SCULPTURE_TYPE"]["value_name"] == "Estátua"
     assert by_id["ARTWORK_TYPE"]["value_name"] == "Réplica"
@@ -557,3 +557,58 @@ def test_build_mercado_livre_attributes_fills_secondary_sculpture_fields(monkeyp
     assert by_id["LENGTH"]["value_struct"] == {"number": 4.4, "unit": "cm"}
     assert by_id["WEIGHT"]["value_struct"] == {"number": 15.0, "unit": "g"}
     assert by_id["WITH_BASE"]["value_name"] == "Não"
+
+
+def test_build_mercado_livre_attributes_fills_keychain_secondary_fields(monkeypatch: pytest.MonkeyPatch) -> None:
+    """INCLUDES_HOOK, INCLUDES_STRAP, PIECES_NUMBER e MIN_RECOMMENDED_AGE devem ser preenchidos
+    automaticamente para chaveiros — os campos 'Características secundárias' que aparecem
+    vazios no formulário do Mercado Livre."""
+    service = StoreService()
+    # Confirmed attribute IDs from GET /categories/MLB439316/attributes on 2026-05-03
+    category_attributes = [
+        {"id": "MATERIAL", "name": "Material", "value_type": "string", "tags": {"required": True}, "values": [{"id": "1", "name": "Plástico"}]},
+        {"id": "HEIGHT", "name": "Altura", "value_type": "number_unit", "values": []},
+        {"id": "WIDTH", "name": "Largura", "value_type": "number_unit", "values": []},
+        {"id": "MIN_RECOMMENDED_AGE", "name": "Idade mínima recomendada", "value_type": "number_unit", "values": []},
+        {"id": "INCLUDES_HOOK", "name": "Inclui gancho", "value_type": "boolean", "values": [{"id": "1", "name": "Não"}, {"id": "2", "name": "Sim"}]},
+        {"id": "INCLUDES_STRAP", "name": "Inclui correia", "value_type": "boolean", "values": [{"id": "1", "name": "Não"}, {"id": "2", "name": "Sim"}]},
+        {"id": "PIECES_NUMBER", "name": "Quantidade de peças", "value_type": "number", "values": []},
+    ]
+    monkeypatch.setattr(service, "fetch_mercado_livre_category_attributes", lambda cat: category_attributes)
+
+    project = {
+        "name": "Chaveiro Homem De Ferro",
+        "original_filename": "chaveiro.3mf",
+        "metadata": {"mesh_metrics": {"extents_mm_assumed": [45.0, 50.0, 8.0]}},
+        "sales_profile": {
+            "estimated_material_g": 5.0,
+            "assumptions": ["Material assumido: PLA. Ajuste conforme uso final."],
+        },
+    }
+    channel = {"title": "Chaveiro Homem De Ferro Impresso Em 3D", "description": "Chaveiro impresso."}
+
+    attributes = service.build_mercado_livre_attributes("MLB439316", project, channel)
+    by_id = {item["id"]: item for item in attributes}
+
+    # Material PLA should be mapped to ML option "Plástico"
+    assert by_id["MATERIAL"]["value_name"] == "Plástico", "PLA deve ser mapeado para Plástico"
+
+    # Dimensions
+    assert "WIDTH" in by_id, "WIDTH (Largura) deve estar preenchido"
+    assert "HEIGHT" in by_id, "HEIGHT (Altura) deve estar preenchido"
+
+    # Keychain has hook
+    assert "INCLUDES_HOOK" in by_id, "INCLUDES_HOOK (Inclui gancho) deve estar preenchido"
+    assert by_id["INCLUDES_HOOK"]["value_name"] == "Sim", "Chaveiro deve ter gancho=Sim"
+
+    # No strap by default
+    assert "INCLUDES_STRAP" in by_id, "INCLUDES_STRAP (Inclui correia) deve estar preenchido"
+    assert by_id["INCLUDES_STRAP"]["value_name"] == "Não", "INCLUDES_STRAP default deve ser Não"
+
+    # 1 piece
+    assert "PIECES_NUMBER" in by_id, "PIECES_NUMBER (Quantidade de peças) deve estar preenchido"
+    assert by_id["PIECES_NUMBER"]["value_name"] == "1", "Quantidade de peças default deve ser 1"
+
+    # Minimum recommended age = 3 anos
+    assert "MIN_RECOMMENDED_AGE" in by_id, "MIN_RECOMMENDED_AGE (Idade mínima) deve estar preenchido"
+    assert by_id["MIN_RECOMMENDED_AGE"]["value_name"] == "3 anos", "Idade mínima default deve ser 3 anos"
