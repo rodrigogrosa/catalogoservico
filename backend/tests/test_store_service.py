@@ -668,3 +668,40 @@ def test_build_mercado_livre_attributes_fills_keychain_secondary_fields(monkeypa
     # Minimum recommended age = 3 anos
     assert "MIN_RECOMMENDED_AGE" in by_id, "MIN_RECOMMENDED_AGE (Idade mínima) deve estar preenchido"
     assert by_id["MIN_RECOMMENDED_AGE"]["value_name"] == "3 anos", "Idade mínima default deve ser 3 anos"
+
+
+def test_build_mercado_livre_attributes_gtin_uses_empty_reason_not_free_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    """GTIN só aceita códigos de barras reais — enviar 'Não se aplica' como value_name
+    causa HTTP 400 item.attribute.product_identifier.invalid_format (cause_id 7711).
+    O correto é enviar EMPTY_GTIN_REASON com a opção adequada e NÃO enviar GTIN."""
+    service = StoreService()
+    category_attributes = [
+        {"id": "BRAND", "name": "Marca", "value_type": "string", "tags": {"required": True}, "values": []},
+        {"id": "GTIN", "name": "Código universal de produto", "value_type": "string", "values": []},
+        {"id": "EMPTY_GTIN_REASON", "name": "Motivo de GTIN vazio", "value_type": "string", "values": [
+            {"id": "7711001", "name": "O produto é uma peça artesanal"},
+            {"id": "7711002", "name": "O produto é um kit ou pack"},
+            {"id": "7711003", "name": "O produto não tem código cadastrado"},
+            {"id": "7711004", "name": "Outro motivo"},
+        ]},
+    ]
+    monkeypatch.setattr(service, "fetch_mercado_livre_category_attributes", lambda cat: category_attributes)
+
+    project = {"name": "Chaveiro", "original_filename": "c.3mf", "metadata": {}, "sales_profile": {}}
+    channel = {"title": "Chaveiro", "description": ""}
+
+    attributes = service.build_mercado_livre_attributes("MLB439316", project, channel)
+    by_id = {item["id"]: item for item in attributes}
+
+    # GTIN must NOT be present — sending free text causes product_identifier.invalid_format
+    assert "GTIN" not in by_id, (
+        "GTIN NÃO deve ser enviado com texto livre — causa HTTP 400 "
+        "item.attribute.product_identifier.invalid_format"
+    )
+    # EMPTY_GTIN_REASON must be present instead
+    assert "EMPTY_GTIN_REASON" in by_id, (
+        "EMPTY_GTIN_REASON deve ser enviado para declarar ausência de GTIN"
+    )
+    assert by_id["EMPTY_GTIN_REASON"]["value_name"] == "O produto não tem código cadastrado"
+    # value_id must be set (ML matched the option)
+    assert by_id["EMPTY_GTIN_REASON"].get("value_id") == "7711003"

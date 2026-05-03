@@ -1107,14 +1107,28 @@ class StoreService:
                 value_name = str(values_by_id.get(attribute_id, "")).strip()
                 if value_name:
                     normalized.append(self.build_mercado_livre_attribute(attribute, value_name=value_name[:255]))
-        # GTIN (Código universal): send "Não se aplica" so ML doesn't show it empty
+        # GTIN: aceita apenas códigos de barras reais (EAN-13, UPC-12, etc).
+        # "Não se aplica" como value_name causa HTTP 400 item.attribute.product_identifier.invalid_format.
+        # A forma correta é NÃO enviar GTIN e enviar EMPTY_GTIN_REASON em seu lugar.
+        # Ref: categoria MLB439316: EMPTY_GTIN_REASON tem opção "O produto não tem código cadastrado".
         seen_ids = {item["id"] for item in normalized if item.get("id")}
-        if "GTIN" in by_id and "GTIN" not in seen_ids:
-            option = self.match_mercado_livre_attribute_option(by_id["GTIN"], "Não se aplica")
+        if "EMPTY_GTIN_REASON" in by_id and "EMPTY_GTIN_REASON" not in seen_ids and "GTIN" not in seen_ids:
+            reason_attr = by_id["EMPTY_GTIN_REASON"]
+            reason_value = "O produto não tem código cadastrado"
+            option = self.match_mercado_livre_attribute_option(reason_attr, reason_value)
             if option:
-                normalized.append({"id": "GTIN", "name": by_id["GTIN"].get("name", "Código universal do produto"), "value_id": option.get("id"), "value_name": option.get("name")})
+                normalized.append({
+                    "id": "EMPTY_GTIN_REASON",
+                    "name": reason_attr.get("name", "Motivo de GTIN vazio"),
+                    "value_id": option.get("id"),
+                    "value_name": option.get("name"),
+                })
             else:
-                normalized.append({"id": "GTIN", "name": by_id["GTIN"].get("name", "Código universal do produto"), "value_name": "Não se aplica"})
+                normalized.append({
+                    "id": "EMPTY_GTIN_REASON",
+                    "name": reason_attr.get("name", "Motivo de GTIN vazio"),
+                    "value_name": reason_value,
+                })
         return normalized
 
     def build_mercado_livre_attribute(
