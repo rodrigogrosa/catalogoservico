@@ -82,6 +82,7 @@ export type SalesProfile = {
   warranty?: SalesProfileWarranty | null;
   variations?: SalesProfileVariation[] | null;
   // Photo ad overrides — stored here so project.previews stays untouched.
+  photo_order?: string[] | null;                          // explicit href order; first = primary
   photo_label_overrides?: Record<string, string> | null;  // path → custom label
   hidden_photo_paths?: string[] | null;                   // paths hidden from ad
   extra_ad_photos?: SalesProfileExtraPhoto[] | null;      // user-added photos by URL

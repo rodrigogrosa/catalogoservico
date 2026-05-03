@@ -121,6 +121,7 @@ class SalesProfile(BaseModel):
     default_stock: int | None = None
     warranty: SalesProfileWarranty | None = None
     variations: list[SalesProfileVariation] = Field(default_factory=list)
+    photo_order: list[str] = Field(default_factory=list)
     photo_label_overrides: dict[str, str] = Field(default_factory=dict)
     hidden_photo_paths: list[str] = Field(default_factory=list)
     extra_ad_photos: list[SalesProfileExtraPhoto] = Field(default_factory=list)

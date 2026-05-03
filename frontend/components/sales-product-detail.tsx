@@ -65,7 +65,7 @@ export function SalesProductDetail({ project }: Props) {
   const activeSales = editing ? salesDraft : sales;
   const channels = useMemo(() => activeSales?.marketplace_attributes ?? [], [activeSales]);
   const adPhotos = useMemo(
-    () => collectAdPhotos(localProject, activeSales?.photo_label_overrides ?? null, activeSales?.hidden_photo_paths ?? null, activeSales?.extra_ad_photos ?? null),
+    () => collectAdPhotos(localProject, activeSales?.photo_label_overrides ?? null, activeSales?.hidden_photo_paths ?? null, activeSales?.extra_ad_photos ?? null, activeSales?.photo_order ?? null),
     [localProject, activeSales],
   );
   const primary = channels[0];
@@ -571,6 +571,7 @@ export function SalesProductDetail({ project }: Props) {
           arr[idx] = { ...arr[idx], ...updates };
           setSalesField("extra_ad_photos", arr);
         }}
+        onReorder={(newOrder) => setSalesField("photo_order", newOrder)}
       />
 
       <StorePublicationPanel
@@ -932,6 +933,7 @@ type PhotoDownloadPanelProps = {
   onAddPhoto?: (photo: SalesProfileExtraPhoto) => void;
   onRemoveExtra?: (idx: number) => void;
   onUpdateExtra?: (idx: number, updates: Partial<SalesProfileExtraPhoto>) => void;
+  onReorder?: (newOrderHrefs: string[]) => void;
 };
 
 function PhotoDownloadPanel({
@@ -947,10 +949,19 @@ function PhotoDownloadPanel({
   onAddPhoto,
   onRemoveExtra,
   onUpdateExtra,
+  onReorder,
 }: PhotoDownloadPanelProps) {
   const [status, setStatus] = useState<string | null>(null);
   const [newPhotoUrl, setNewPhotoUrl] = useState("");
   const [newPhotoLabel, setNewPhotoLabel] = useState("");
+
+  function movePhoto(idx: number, dir: -1 | 1) {
+    const newIdx = idx + dir;
+    if (newIdx < 0 || newIdx >= photos.length) return;
+    const newOrder = photos.map((p) => p.href);
+    [newOrder[idx], newOrder[newIdx]] = [newOrder[newIdx], newOrder[idx]];
+    onReorder?.(newOrder);
+  }
 
   async function downloadPhoto(photo: AdPhoto) {
     try {
@@ -1016,15 +1027,48 @@ function PhotoDownloadPanel({
               <div className="aspect-[4/3] bg-slate-100 relative">
                 <img src={photo.href} alt={`${projectName} - ${photo.label}`} className="h-full w-full object-cover" loading="lazy" />
                 {editing ? (
-                  <button
-                    type="button"
-                    title="Excluir esta foto do anúncio"
-                    onClick={() => onHidePhoto?.(photo.href)}
-                    className="absolute right-2 top-2 rounded-full bg-red-600 px-2 py-1 text-xs font-semibold text-white shadow hover:bg-red-700"
-                  >
-                    Excluir
-                  </button>
-                ) : null}
+                  <>
+                    {index === 0 ? (
+                      <span className="absolute left-2 top-2 rounded-full bg-orange-600 px-2 py-1 text-xs font-bold text-white shadow">
+                        Principal
+                      </span>
+                    ) : null}
+                    <div className="absolute right-2 top-2 flex flex-col gap-1">
+                      <button
+                        type="button"
+                        title="Mover para cima"
+                        disabled={index === 0}
+                        onClick={() => movePhoto(index, -1)}
+                        className="rounded-full bg-white/90 px-2 py-1 text-xs font-bold text-slate-800 shadow disabled:opacity-30 hover:bg-white"
+                      >
+                        ↑
+                      </button>
+                      <button
+                        type="button"
+                        title="Mover para baixo"
+                        disabled={index === photos.length - 1}
+                        onClick={() => movePhoto(index, 1)}
+                        className="rounded-full bg-white/90 px-2 py-1 text-xs font-bold text-slate-800 shadow disabled:opacity-30 hover:bg-white"
+                      >
+                        ↓
+                      </button>
+                      <button
+                        type="button"
+                        title="Excluir esta foto do anúncio"
+                        onClick={() => onHidePhoto?.(photo.href)}
+                        className="rounded-full bg-red-600 px-2 py-1 text-xs font-semibold text-white shadow hover:bg-red-700"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  index === 0 ? (
+                    <span className="absolute left-2 top-2 rounded-full bg-orange-600 px-2 py-1 text-xs font-bold text-white shadow">
+                      Principal
+                    </span>
+                  ) : null
+                )}
               </div>
               <div className="space-y-3 p-4">
                 <div>
@@ -1509,6 +1553,7 @@ function collectAdPhotos(
   labelOverrides: Record<string, string> | null = null,
   hiddenPaths: string[] | null = null,
   extraPhotos: SalesProfileExtraPhoto[] | null = null,
+  photoOrder: string[] | null = null,
 ): AdPhoto[] {
   const hiddenSet = new Set(hiddenPaths ?? []);
   const overrides = labelOverrides ?? {};
@@ -1534,6 +1579,36 @@ function collectAdPhotos(
     const current = dedupedByHref.get(photo.href);
     if (!current || photo.score > current.score) dedupedByHref.set(photo.href, photo);
   });
+
+  // Append extra user-added photos (already resolved)
+  (extraPhotos ?? []).forEach((ep) => {
+    const href = ep.path;
+    if (!href || hiddenSet.has(href)) return;
+    const effectiveLabel = overrides[href] ?? ep.label;
+    if (!dedupedByHref.has(href)) {
+      dedupedByHref.set(href, {
+        label: effectiveLabel,
+        href,
+        filename: `${safeFileName(project.name)}_${safeFileName(effectiveLabel)}.jpg`,
+        score: -1,
+        signature: normalizePhotoSignature(effectiveLabel, href),
+      });
+    }
+  });
+
+  // If the user defined an explicit order, use it; otherwise fall back to score sort
+  if (photoOrder && photoOrder.length > 0) {
+    const orderIndex = new Map(photoOrder.map((href, i) => [href, i]));
+    const inOrder = photoOrder
+      .filter((href) => dedupedByHref.has(href))
+      .map((href) => dedupedByHref.get(href)!);
+    // Append any photos not mentioned in photoOrder at the end (sorted by score)
+    const rest = Array.from(dedupedByHref.values())
+      .filter((p) => !orderIndex.has(p.href))
+      .sort((a, b) => b.score - a.score);
+    return [...inOrder, ...rest].map((p) => ({ label: p.label, href: p.href, filename: p.filename }));
+  }
+
   const ordered = Array.from(dedupedByHref.values()).sort((a, b) => b.score - a.score);
   const selected: AdPhoto[] = [];
   const seenSignatures = new Set<string>();
