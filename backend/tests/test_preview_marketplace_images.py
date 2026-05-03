@@ -35,7 +35,8 @@ def test_generate_marketplace_ready_assets_creates_square_commercial_images(tmp_
         assert generated.mode == "RGB"
 
 
-def test_store_service_prefers_marketplace_preview_images() -> None:
+def test_store_service_includes_all_preview_images() -> None:
+    """All previews are included so the user sees all photos in the listing (not just marketplace_preview ones)."""
     project = {
         "preview_url": "/storage/project/previews/raw.png",
         "previews": [
@@ -47,7 +48,10 @@ def test_store_service_prefers_marketplace_preview_images() -> None:
 
     public = StoreService().resolve_product_images(project, None, store)
 
-    assert public == ["https://api.euachei3d.com.br/storage/project/previews/marketplace_01.jpg"]
+    base = "https://api.euachei3d.com.br"
+    assert f"{base}/storage/project/previews/raw.png" in public
+    assert f"{base}/storage/project/previews/marketplace_01.jpg" in public
+    assert len(public) == 2
 
 
 def test_infer_dimensions_does_not_parse_3mf_with_trimesh(monkeypatch, tmp_path: Path) -> None:

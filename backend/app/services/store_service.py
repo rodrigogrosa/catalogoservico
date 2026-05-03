@@ -538,7 +538,11 @@ class StoreService:
         channel = next((item for item in channels if self.matches_channel(connector.marketplace, item.get("marketplace", ""))), channels[0] if channels else {})
         price = float(request.price_override_brl or sales.get("suggested_price_50_margin_brl") or 0)
         images = self.resolve_product_images(project, request.image_base_url, store)
-        title = str(channel.get("title") or project.get("name") or "Produto impresso em 3D")
+        # Always derive title from current project name — the saved channel.title may be stale
+        # (generated when the project had no name yet). channel.title is only used as last resort.
+        _proj_name = str(project.get("name") or "").strip()
+        _proj_slug = _proj_name.replace("_", " ").replace("-", " ").strip().title()
+        title = _proj_slug or str(channel.get("title") or "Produto impresso em 3D")
         description = str(channel.get("full_description") or channel.get("description") or "Produto impresso em 3D sob demanda.")
 
         if connector.marketplace == "mercado_livre":
@@ -623,15 +627,11 @@ class StoreService:
         hidden_set = set(sales.get("hidden_photo_paths") or [])
         extra_photos = list(sales.get("extra_ad_photos") or [])
 
+        photo_order: list[str] = list(sales.get("photo_order") or [])
+
         previews = list(project.get("previews", []) or [])
-        marketplace_paths = [
-            item.get("path")
-            for item in previews
-            if str(item.get("kind", "")).lower() == "marketplace_preview"
-            or "marketplace_" in str(item.get("label", "")).lower()
-            or "marketplace_" in str(item.get("path", "")).lower()
-        ]
-        raw_paths = marketplace_paths or [project.get("preview_url")] + [item.get("path") for item in previews]
+        # Use all previews — marketplace_preview filtering was too restrictive and excluded real photos
+        raw_paths = [project.get("preview_url")] + [item.get("path") for item in previews]
         candidate_bases = self.image_base_url_candidates(image_base_url, store)
         primary_base = candidate_bases[0] if candidate_bases else self.settings.public_backend_origin.rstrip("/")
         public_paths: list[str] = []
@@ -660,7 +660,14 @@ class StoreService:
             if not ep_path.lower().split("?")[0].endswith((".png", ".jpg", ".jpeg", ".webp")):
                 ep_path = ep_path  # include anyway — ML will validate
             public_paths.append(ep_path)
-        return list(dict.fromkeys(public_paths))
+        deduped = list(dict.fromkeys(public_paths))
+        # Apply explicit photo_order from sales_profile (user-defined ordering)
+        if photo_order:
+            order_index = {url: i for i, url in enumerate(photo_order)}
+            in_order = [u for u in photo_order if u in set(deduped)]
+            rest = [u for u in deduped if u not in order_index]
+            deduped = in_order + rest
+        return deduped
 
     def resolve_local_product_images(self, project: dict[str, Any]) -> list[str]:
         previews = list(project.get("previews", []) or [])
