@@ -885,30 +885,29 @@ class StoreService:
     def _ensure_ml_image_size(self, image_path: str) -> tuple[bytes, str]:
         """Retorna (bytes, mime_type) garantindo dimensão mínima de 1200px (requisito ML).
 
-        ML exige ≥500px após remoção de bordas brancas. Para segurança enviamos ≥1200px.
-        Se a imagem já for grande o suficiente, retorna os bytes originais sem reprocessar.
+        ML exige ≥500px após remoção de bordas brancas. Usar canvas branco é PROIBIDO pois
+        o ML remove bordas brancas e volta ao tamanho original. A solução correta é usar
+        ImageOps.fit para esticar/cortar a imagem e preencher os 1200x1200 SEM bordas brancas.
         """
-        from PIL import Image  # noqa: PLC0415
+        from PIL import Image, ImageOps  # noqa: PLC0415
         import io as _io
 
         path = Path(image_path)
+        target = 1200
         with Image.open(path) as img:
             orig_w, orig_h = img.size
-            target = 1200
+            rgb = img.convert("RGB")
+            # Verifica se a imagem já tem ≥1200px nos dois lados — não reprocessar
             if orig_w >= target and orig_h >= target:
-                return path.read_bytes(), mimetypes.guess_type(path.name)[0] or "image/jpeg"
-            # Upscale mantendo proporção com LANCZOS, depois padeia em fundo branco 1200x1200
-            scale = target / min(orig_w, orig_h)
-            new_w = max(target, int(orig_w * scale))
-            new_h = max(target, int(orig_h * scale))
-            resized = img.resize((new_w, new_h), Image.LANCZOS).convert("RGB")
-            canvas = Image.new("RGB", (target, target), (255, 255, 255))
-            offset_x = (target - min(new_w, target)) // 2
-            offset_y = (target - min(new_h, target)) // 2
-            canvas.paste(resized.crop((0, 0, min(new_w, target), min(new_h, target))), (offset_x, offset_y))
+                buf = _io.BytesIO()
+                rgb.save(buf, format="JPEG", quality=92)
+                return buf.getvalue(), "image/jpeg"
+            # ImageOps.fit: escala + corta para preencher exatamente target×target SEM bordas
+            # Isso garante que o ML não encontrará bordas brancas para remover
+            fitted = ImageOps.fit(rgb, (target, target), Image.LANCZOS)
             buf = _io.BytesIO()
-            canvas.save(buf, format="JPEG", quality=92)
-            logger.debug("ML image upscaled %dx%d → 1200x1200 (%s)", orig_w, orig_h, path.name)
+            fitted.save(buf, format="JPEG", quality=92)
+            logger.debug("ML image resized %dx%d → %dx%d via ImageOps.fit (%s)", orig_w, orig_h, target, target, path.name)
             return buf.getvalue(), "image/jpeg"
 
     def mercado_livre_upload_picture(self, access_token: str, image_path: str) -> dict[str, str]:
