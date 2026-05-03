@@ -882,17 +882,48 @@ class StoreService:
             )
         return uploaded
 
+    def _ensure_ml_image_size(self, image_path: str) -> tuple[bytes, str]:
+        """Retorna (bytes, mime_type) garantindo dimensão mínima de 1200px (requisito ML).
+
+        ML exige ≥500px após remoção de bordas brancas. Para segurança enviamos ≥1200px.
+        Se a imagem já for grande o suficiente, retorna os bytes originais sem reprocessar.
+        """
+        from PIL import Image  # noqa: PLC0415
+        import io as _io
+
+        path = Path(image_path)
+        with Image.open(path) as img:
+            orig_w, orig_h = img.size
+            target = 1200
+            if orig_w >= target and orig_h >= target:
+                return path.read_bytes(), mimetypes.guess_type(path.name)[0] or "image/jpeg"
+            # Upscale mantendo proporção com LANCZOS, depois padeia em fundo branco 1200x1200
+            scale = target / min(orig_w, orig_h)
+            new_w = max(target, int(orig_w * scale))
+            new_h = max(target, int(orig_h * scale))
+            resized = img.resize((new_w, new_h), Image.LANCZOS).convert("RGB")
+            canvas = Image.new("RGB", (target, target), (255, 255, 255))
+            offset_x = (target - min(new_w, target)) // 2
+            offset_y = (target - min(new_h, target)) // 2
+            canvas.paste(resized.crop((0, 0, min(new_w, target), min(new_h, target))), (offset_x, offset_y))
+            buf = _io.BytesIO()
+            canvas.save(buf, format="JPEG", quality=92)
+            logger.debug("ML image upscaled %dx%d → 1200x1200 (%s)", orig_w, orig_h, path.name)
+            return buf.getvalue(), "image/jpeg"
+
     def mercado_livre_upload_picture(self, access_token: str, image_path: str) -> dict[str, str]:
         path = Path(image_path)
         if not path.exists():
             raise ValueError(f"Arquivo de preview não encontrado para upload: {path}")
         boundary = f"----SnapMaker3dStudio{uuid4().hex}"
-        mime_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-        file_bytes = path.read_bytes()
+        file_bytes, mime_type = self._ensure_ml_image_size(image_path)
+        # Usa extensão condizente com o mime_type resultante (pode ter sido convertido para JPEG)
+        ext = ".jpg" if "jpeg" in mime_type else Path(image_path).suffix
+        upload_filename = Path(image_path).stem + ext
         body = b"".join(
             [
                 f"--{boundary}\r\n".encode("utf-8"),
-                f'Content-Disposition: form-data; name="file"; filename="{path.name}"\r\n'.encode("utf-8"),
+                f'Content-Disposition: form-data; name="file"; filename="{upload_filename}"\r\n'.encode("utf-8"),
                 f"Content-Type: {mime_type}\r\n\r\n".encode("utf-8"),
                 file_bytes,
                 b"\r\n",
