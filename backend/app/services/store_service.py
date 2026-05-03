@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import logging
 import mimetypes
 from pathlib import Path
 import tempfile
+
+logger = logging.getLogger(__name__)
 import secrets
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -765,13 +768,18 @@ class StoreService:
         # ML requires every variation to have picture_ids when pictures are present.
         # Assign all uploaded picture IDs to each variation.
         uploaded_pictures: list[dict[str, str]] = list(product_payload.get("pictures") or [])
-        if uploaded_pictures and product_payload.get("variations"):
-            picture_ids = [p["id"] for p in uploaded_pictures if p.get("id")]
-            if picture_ids:
-                product_payload["variations"] = [
-                    {**v, "picture_ids": picture_ids}
-                    for v in product_payload["variations"]
-                ]
+        picture_ids = [p["id"] for p in uploaded_pictures if p.get("id")]
+        if product_payload.get("variations"):
+            if not picture_ids:
+                raise ValueError(
+                    "Mercado Livre: não foi possível carregar imagens para atribuir às variações. "
+                    "Adicione imagens de preview ao projeto antes de publicar. "
+                    "(Dica: gere previews na aba de pré-visualização do projeto.)"
+                )
+            product_payload["variations"] = [
+                {**v, "picture_ids": picture_ids}
+                for v in product_payload["variations"]
+            ]
 
         item_payload = {
             key: value
@@ -819,6 +827,7 @@ class StoreService:
         each image ourselves and re-upload it via the ML picture upload endpoint.
         """
         uploaded: list[dict[str, str]] = []
+        errors: list[str] = []
         for url in source_urls[:8]:
             try:
                 req = Request(url, headers={"User-Agent": "SnapMaker3dStudio/1.0"})
@@ -835,8 +844,15 @@ class StoreService:
                     uploaded.append(self.mercado_livre_upload_picture(access_token, tmp_path))
                 finally:
                     Path(tmp_path).unlink(missing_ok=True)
-            except Exception:  # noqa: BLE001
-                pass  # skip URLs that fail; partial uploads are better than none
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"{url}: {exc}")
+        if errors:
+            logger.warning(
+                "ML picture upload from source URLs: %d/%d failed. Errors: %s",
+                len(errors),
+                len(source_urls),
+                "; ".join(errors[:3]),
+            )
         return uploaded
 
     def mercado_livre_upload_picture(self, access_token: str, image_path: str) -> dict[str, str]:

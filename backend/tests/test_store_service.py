@@ -111,7 +111,7 @@ def test_publish_includes_variations_in_item_payload(monkeypatch: pytest.MonkeyP
         "buying_mode": "buy_it_now",
         "condition": "new",
         "listing_type_id": "gold_special",
-        "pictures": [],
+        "pictures": [{"id": "PIC1"}],
         "sale_terms": [{"id": "WARRANTY_TYPE", "value_name": "Garantia do vendedor"}, {"id": "WARRANTY_TIME", "value_name": "1 meses"}],
         "attributes": [],
         "description_plain_text": "Chaveiro impresso em 3D.",
