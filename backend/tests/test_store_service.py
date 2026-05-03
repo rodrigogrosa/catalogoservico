@@ -705,3 +705,46 @@ def test_build_mercado_livre_attributes_gtin_uses_empty_reason_not_free_text(mon
     assert by_id["EMPTY_GTIN_REASON"]["value_name"] == "O produto não tem código cadastrado"
     # value_id must be set (ML matched the option)
     assert by_id["EMPTY_GTIN_REASON"].get("value_id") == "7711003"
+
+
+def test_predict_category_fallback_returns_estatuetas_for_decorations() -> None:
+    """Quando o domain_discovery falha para todas as queries (sem rede ou sem resultado),
+    o fallback deve ser MLB186814 (Estatuetas — enfeites e decoração da casa),
+    nunca string vazia (que causaria category_id inválido no payload ML)."""
+    service = StoreService()
+    # Force all HTTP calls to fail → simulates offline or no results scenario
+    original_urlopen = __import__("urllib.request", fromlist=["urlopen"]).urlopen
+
+    def failing_urlopen(*args: object, **kwargs: object) -> object:
+        raise OSError("simulated network failure")
+
+    import urllib.request as _urllib_request
+    _urllib_request.urlopen = failing_urlopen  # type: ignore[assignment]
+    try:
+        store = {"settings": {"site_id": "MLB"}}
+        project = {"name": "Personagem Decorativo", "metadata": {}, "sales_profile": {}}
+        result = service.predict_mercado_livre_category_id(store, project, "Personagem Decorativo", {})
+    finally:
+        _urllib_request.urlopen = original_urlopen  # type: ignore[assignment]
+
+    assert result == "MLB186814", (
+        "Fallback de categoria deve ser MLB186814 (Estatuetas / enfeites 3D), "
+        f"mas retornou: {result!r}"
+    )
+
+
+def test_prediction_queries_default_includes_decoration_terms() -> None:
+    """Queries padrão (item genérico, não chaveiro/máscara) devem incluir termos
+    de 'enfeite decorativo' para que o domain_discovery retorne categorias de
+    enfeites e decoração da casa (MLB186814) e não categorias aleatórias."""
+    service = StoreService()
+    project = {"name": "Guerreiro Medieval", "metadata": {}, "sales_profile": {}}
+    queries = service.build_mercado_livre_prediction_queries(project, "Guerreiro Medieval", {})
+
+    queries_lower = [q.lower() for q in queries]
+    # At least one query must contain decoration-related words so domain_discovery
+    # routes to the decorations category (MLB186814)
+    decoration_words = {"enfeite", "decorativ", "estatueta", "figura", "impresso"}
+    assert any(
+        any(word in q for word in decoration_words) for q in queries_lower
+    ), f"Nenhuma query contém termos de decoração: {queries}"
