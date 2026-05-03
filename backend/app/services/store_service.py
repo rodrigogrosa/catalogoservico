@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import json
 import mimetypes
 from pathlib import Path
+import tempfile
 import secrets
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -748,6 +749,18 @@ class StoreService:
             product_payload["pictures"] = self.upload_local_mercado_livre_pictures(access_token, local_images)
         elif not product_payload.get("pictures"):
             pass  # no pictures available at all
+        else:
+            # Pictures exist only as source URLs (not yet uploaded to ML).
+            # Download each URL to a temp file and upload so ML gets proper picture IDs.
+            source_urls = [
+                p["source"]
+                for p in product_payload["pictures"]
+                if p.get("source") and not p.get("id")
+            ]
+            if source_urls:
+                uploaded_from_urls = self._upload_pictures_from_urls(access_token, source_urls)
+                if uploaded_from_urls:
+                    product_payload["pictures"] = uploaded_from_urls
 
         # ML requires every variation to have picture_ids when pictures are present.
         # Assign all uploaded picture IDs to each variation.
@@ -795,6 +808,35 @@ class StoreService:
         uploaded: list[dict[str, str]] = []
         for image_path in image_paths[:8]:
             uploaded.append(self.mercado_livre_upload_picture(access_token, image_path))
+        return uploaded
+
+    def _upload_pictures_from_urls(self, access_token: str, source_urls: list[str]) -> list[dict[str, str]]:
+        """Download source-URL images to temp files and upload them to Mercado Livre.
+
+        Used as a fallback when no local preview files are available but the payload
+        already contains public source URLs (e.g. from the project's previews served
+        by this backend).  ML cannot fetch our backend URLs directly, so we download
+        each image ourselves and re-upload it via the ML picture upload endpoint.
+        """
+        uploaded: list[dict[str, str]] = []
+        for url in source_urls[:8]:
+            try:
+                req = Request(url, headers={"User-Agent": "SnapMaker3dStudio/1.0"})
+                with urlopen(req, timeout=30) as resp:  # noqa: S310
+                    data = resp.read()
+                raw_path = url.split("?")[0]
+                suffix = Path(raw_path).suffix.lower()
+                if suffix not in {".jpg", ".jpeg", ".png", ".webp"}:
+                    suffix = ".jpg"
+                with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+                    tmp.write(data)
+                    tmp_path = tmp.name
+                try:
+                    uploaded.append(self.mercado_livre_upload_picture(access_token, tmp_path))
+                finally:
+                    Path(tmp_path).unlink(missing_ok=True)
+            except Exception:  # noqa: BLE001
+                pass  # skip URLs that fail; partial uploads are better than none
         return uploaded
 
     def mercado_livre_upload_picture(self, access_token: str, image_path: str) -> dict[str, str]:

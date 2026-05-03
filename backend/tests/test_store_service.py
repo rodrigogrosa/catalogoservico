@@ -247,6 +247,54 @@ def test_publish_variations_receive_picture_ids(monkeypatch: pytest.MonkeyPatch,
         assert var["picture_ids"] == ["ML_P1", "ML_P2"], "picture_ids deve conter todos os IDs uploadados"
 
 
+def test_publish_variations_receive_picture_ids_from_source_url_fallback(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """When no local files exist but payload has source-URL pictures, they must be downloaded
+    and uploaded to ML so that variations get picture_ids (fixes item.pictures.variation.quantity)."""
+    service = StoreService()
+    project = _make_fake_project(tmp_path)
+    store = _make_fake_store()
+
+    product_payload = {
+        "title": "T", "category_id": "MLB439316", "price": 29.90, "available_quantity": 50,
+        "currency_id": "BRL", "buying_mode": "buy_it_now", "condition": "new",
+        "listing_type_id": "gold_special",
+        "pictures": [{"source": "https://api.euachei3d.com.br/previews/p1/photo.jpg"}],
+        "sale_terms": [{"id": "WARRANTY_TYPE", "value_name": "Garantia do vendedor"}],
+        "attributes": [], "description_plain_text": "Desc",
+        "variations": [
+            {"price": 29.90, "available_quantity": 10, "seller_custom_field": "SKU-1",
+             "attribute_combinations": [{"id": "COLOR", "value_name": "Azul"}]},
+        ],
+    }
+
+    # No local files — fallback to source-URL download path
+    monkeypatch.setattr(service, "resolve_local_product_images", lambda p: [])
+    upload_from_urls_called_with: list[list[str]] = []
+
+    def fake_upload_from_urls(tok, urls):
+        upload_from_urls_called_with.append(urls)
+        return [{"id": "ML_FROM_URL_1"}]
+
+    monkeypatch.setattr(service, "_upload_pictures_from_urls", fake_upload_from_urls)
+    monkeypatch.setattr(service, "mercado_livre_validate_item", lambda tok, p: {})
+
+    sent: list[dict] = []
+
+    def fake_api(*, access_token, method, path, payload=None):
+        sent.append({"path": path, "payload": payload})
+        return {"id": "MLB99"}
+
+    monkeypatch.setattr(service, "mercado_livre_api_request", fake_api)
+
+    service.publish_mercado_livre_item(store, product_payload, project)
+
+    assert upload_from_urls_called_with, "_upload_pictures_from_urls deve ser chamado quando só há source URLs"
+    assert upload_from_urls_called_with[0] == ["https://api.euachei3d.com.br/previews/p1/photo.jpg"]
+    item_post = next(p for p in sent if p["path"] == "/items")
+    for var in item_post["payload"].get("variations", []):
+        assert "picture_ids" in var, "cada variação deve ter picture_ids mesmo sem arquivos locais"
+        assert var["picture_ids"] == ["ML_FROM_URL_1"]
+
 
     """Description endpoint failure must NOT raise — it should be silently ignored."""
     service = StoreService()
