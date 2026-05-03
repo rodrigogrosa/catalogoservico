@@ -564,6 +564,8 @@ class StoreService:
             payload: dict[str, Any] = {
                 "title": ml_title,
                 "category_id": category_id,
+                "price": round(price, 2),
+                "available_quantity": request.stock,
                 "currency_id": "BRL",
                 "buying_mode": "buy_it_now",
                 "condition": "new",
@@ -576,9 +578,6 @@ class StoreService:
             }
             if ml_variations:
                 payload["variations"] = ml_variations
-            else:
-                payload["price"] = round(price, 2)
-                payload["available_quantity"] = request.stock
             return payload
         if connector.marketplace == "shopee":
             return {
