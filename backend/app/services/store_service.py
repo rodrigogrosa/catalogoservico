@@ -545,12 +545,26 @@ class StoreService:
             stored_category_id = str(store.get("settings", {}).get("category_id", "")).strip()
             category_id = stored_category_id if self.looks_like_mercado_livre_category_id(stored_category_id) else self.predict_mercado_livre_category_id(store, project, title, channel)
             images = self.limit_mercado_livre_images(category_id, images)
-            return {
-                "title": title[:60],
+            ml_title = self._truncate_ml_title(title)
+            variations_data = list(sales.get("variations") or [])
+            if variations_data:
+                ml_variations = [
+                    {
+                        "price": round(float(v.get("price_brl", price)), 2),
+                        "available_quantity": int(v.get("stock", request.stock)),
+                        "seller_custom_field": str(v.get("sku", "")),
+                        "attribute_combinations": [
+                            {"id": "COLOR", "value_name": str(v.get("name", "Padrão"))}
+                        ],
+                    }
+                    for v in variations_data
+                ]
+            else:
+                ml_variations = []
+            payload: dict[str, Any] = {
+                "title": ml_title,
                 "category_id": category_id,
-                "price": round(price, 2),
                 "currency_id": "BRL",
-                "available_quantity": request.stock,
                 "buying_mode": "buy_it_now",
                 "condition": "new",
                 "listing_type_id": store.get("settings", {}).get("listing_type_id", "gold_special"),
@@ -560,6 +574,12 @@ class StoreService:
                 "images": images,
                 "category_prediction_applied": bool(category_id) and not self.looks_like_mercado_livre_category_id(stored_category_id),
             }
+            if ml_variations:
+                payload["variations"] = ml_variations
+            else:
+                payload["price"] = round(price, 2)
+                payload["available_quantity"] = request.stock
+            return payload
         if connector.marketplace == "shopee":
             return {
                 "item_name": title[:120],
@@ -600,6 +620,10 @@ class StoreService:
         }
 
     def resolve_product_images(self, project: dict[str, Any], image_base_url: str | None, store: dict[str, Any] | None = None) -> list[str]:
+        sales = project.get("sales_profile") or {}
+        hidden_set = set(sales.get("hidden_photo_paths") or [])
+        extra_photos = list(sales.get("extra_ad_photos") or [])
+
         previews = list(project.get("previews", []) or [])
         marketplace_paths = [
             item.get("path")
@@ -619,12 +643,25 @@ class StoreService:
             if not path.lower().split("?")[0].endswith((".png", ".jpg", ".jpeg", ".webp")):
                 continue
             if path.startswith("http"):
-                if self.is_public_http_image(path):
-                    public_paths.append(path)
+                full_url = path
+                if full_url in hidden_set:
+                    continue
+                if self.is_public_http_image(full_url):
+                    public_paths.append(full_url)
                 continue
-            public_paths.append(f"{primary_base}{path}")
-        unique = list(dict.fromkeys(public_paths))
-        return unique[: max(1, int(self.settings.max_project_previews))]
+            full_url = f"{primary_base}{path}"
+            if full_url in hidden_set or path in hidden_set:
+                continue
+            public_paths.append(full_url)
+        # Append user-added extra photos
+        for ep in extra_photos:
+            ep_path = str(ep.get("path") if isinstance(ep, dict) else getattr(ep, "path", ""))
+            if not ep_path or ep_path in hidden_set:
+                continue
+            if not ep_path.lower().split("?")[0].endswith((".png", ".jpg", ".jpeg", ".webp")):
+                ep_path = ep_path  # include anyway — ML will validate
+            public_paths.append(ep_path)
+        return list(dict.fromkeys(public_paths))
 
     def resolve_local_product_images(self, project: dict[str, Any]) -> list[str]:
         previews = list(project.get("previews", []) or [])
@@ -1041,7 +1078,6 @@ class StoreService:
         max_pictures = self.fetch_mercado_livre_max_pictures(category_id)
         if max_pictures <= 0:
             max_pictures = 12
-        max_pictures = min(max_pictures, max(1, int(self.settings.max_project_previews)))
         return images[:max_pictures]
 
     def fetch_mercado_livre_max_pictures(self, category_id: str) -> int:
@@ -1165,6 +1201,14 @@ class StoreService:
         if len(value) <= 6:
             return "***"
         return f"{value[:2]}***{value[-4:]}"
+
+    def _truncate_ml_title(self, title: str, limit: int = 60) -> str:
+        """Truncate ML title at a word boundary, never cutting mid-word."""
+        if len(title) <= limit:
+            return title
+        truncated = title[:limit]
+        last_space = truncated.rfind(" ")
+        return truncated[:last_space].rstrip() if last_space > 0 else truncated
 
     def matches_channel(self, marketplace: str, channel_name: str) -> bool:
         normalized = channel_name.lower()
