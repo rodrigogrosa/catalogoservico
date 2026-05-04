@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+import tempfile
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse
 
 from app.core.auth import require_permission
@@ -166,6 +169,40 @@ async def refresh_listing_media(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if result is None:
         raise HTTPException(status_code=404, detail="Loja ou projeto nao encontrado.")
+    return result
+
+
+@router.post("/{store_id}/upload-to-ml", response_model=dict)
+async def upload_image_to_ml(
+    store_id: str,
+    file: UploadFile = File(...),
+    current_user: AuthUser = Depends(require_permission("stores.publish")),
+    service: StoreService = Depends(get_store_service),
+) -> dict[str, str]:
+    """Faz upload de uma imagem para o Mercado Livre e retorna o picture ID.
+
+    Usado por scripts locais para pré-enviar imagens já processadas (ml_ready_*.jpg)
+    sem depender do processamento automático do servidor.
+    """
+    store = next(
+        (s for s in service.load_store_records() if s.get("id") == store_id and s.get("owner_username") == current_user.username),
+        None,
+    )
+    if store is None:
+        raise HTTPException(status_code=404, detail="Loja não encontrada.")
+    access_token = str(store.get("credentials", {}).get("access_token", "")).strip()
+    if not access_token:
+        raise HTTPException(status_code=400, detail="ML access_token ausente. Autorize a loja no Mercado Livre primeiro.")
+
+    contents = await file.read()
+    suffix = Path(file.filename or "img.jpg").suffix or ".jpg"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp.write(contents)
+        tmp_path = tmp.name
+    try:
+        result = service.mercado_livre_upload_picture(access_token, tmp_path)
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
     return result
 
 

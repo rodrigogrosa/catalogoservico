@@ -109,6 +109,7 @@ class ProductPublishRequest(BaseModel):
     stock: int = 1
     product_url: str | None = None
     image_base_url: str | None = None
+    pre_uploaded_picture_ids: list[str] | None = None
 
 
 class ProductPublishDraftResponse(BaseModel):

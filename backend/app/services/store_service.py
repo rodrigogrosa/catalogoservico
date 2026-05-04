@@ -437,6 +437,10 @@ class StoreService:
         if not product_payload.get("images") and not self.can_upload_images_during_publish(connector, store, project.model_dump(), payload):
             blockers.append("Nenhuma imagem pública foi encontrada. Gere/baixe imagens ou configure image_base_url.")
 
+        # Inject pre-uploaded picture IDs so publish_mercado_livre_item skips the upload step.
+        if payload.pre_uploaded_picture_ids:
+            product_payload["_pre_uploaded_picture_ids"] = payload.pre_uploaded_picture_ids
+
         if payload.mode == "publish" and not blockers:
             try:
                 publication_result = self.publish_product(connector, store, product_payload, project.model_dump())
@@ -774,26 +778,31 @@ class StoreService:
         if not access_token:
             raise ValueError("Mercado Livre: access_token ausente para publicação.")
 
-        # Always prefer local file upload to ML — source URLs from our backend aren't
-        # publicly downloadable by ML's servers. Only fall back to source URLs if no
-        # local files exist.
-        local_images = self.resolve_local_product_images(project)
-        if local_images:
-            product_payload["pictures"] = self.upload_local_mercado_livre_pictures(access_token, local_images)
-        elif not product_payload.get("pictures"):
-            pass  # no pictures available at all
+        # If caller pre-uploaded images and passed the IDs, skip the upload step entirely.
+        pre_uploaded_ids: list[str] = list(product_payload.pop("_pre_uploaded_picture_ids", None) or [])
+        if pre_uploaded_ids:
+            product_payload["pictures"] = [{"id": pid} for pid in pre_uploaded_ids]
         else:
-            # Pictures exist only as source URLs (not yet uploaded to ML).
-            # Download each URL to a temp file and upload so ML gets proper picture IDs.
-            source_urls = [
-                p["source"]
-                for p in product_payload["pictures"]
-                if p.get("source") and not p.get("id")
-            ]
-            if source_urls:
-                uploaded_from_urls = self._upload_pictures_from_urls(access_token, source_urls)
-                if uploaded_from_urls:
-                    product_payload["pictures"] = uploaded_from_urls
+            # Always prefer local file upload to ML — source URLs from our backend aren't
+            # publicly downloadable by ML's servers. Only fall back to source URLs if no
+            # local files exist.
+            local_images = self.resolve_local_product_images(project)
+            if local_images:
+                product_payload["pictures"] = self.upload_local_mercado_livre_pictures(access_token, local_images)
+            elif not product_payload.get("pictures"):
+                pass  # no pictures available at all
+            else:
+                # Pictures exist only as source URLs (not yet uploaded to ML).
+                # Download each URL to a temp file and upload so ML gets proper picture IDs.
+                source_urls = [
+                    p["source"]
+                    for p in product_payload["pictures"]
+                    if p.get("source") and not p.get("id")
+                ]
+                if source_urls:
+                    uploaded_from_urls = self._upload_pictures_from_urls(access_token, source_urls)
+                    if uploaded_from_urls:
+                        product_payload["pictures"] = uploaded_from_urls
 
         # ML requires every variation to have picture_ids when pictures are present.
         # Assign all uploaded picture IDs to each variation.
