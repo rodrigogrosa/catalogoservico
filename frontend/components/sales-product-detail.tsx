@@ -135,8 +135,10 @@ export function SalesProductDetail({ project }: Props) {
       setEditing(false);
       setSalesDraft(null);
       setSaveMsg("Ficha salva com sucesso.");
+      return updated;
     } catch (err) {
       setSaveMsg(err instanceof Error ? err.message : "Falha ao salvar. Tente novamente.");
+      throw err;
     } finally {
       setSaving(false);
     }
@@ -275,6 +277,10 @@ export function SalesProductDetail({ project }: Props) {
     setDraftLoading(true);
     setDraftError(null);
     try {
+      // Auto-save unsaved edits so the backend always uses the latest photo settings
+      if (editing && salesDraft) {
+        await handleSave();
+      }
       const result = await buildPublicationDraft(selectedStoreId, localProject.id);
       setPublishDraft(result);
     } catch (error) {
@@ -312,9 +318,16 @@ export function SalesProductDetail({ project }: Props) {
     setDraftLoading(true);
     setDraftError(null);
     try {
-      const stock = sales?.default_stock ?? 10;
-      const price = sales?.unit_price_brl ?? sales?.suggested_price_50_margin_brl ?? 80.0;
-      const result = await buildPublicationDraft(selectedStoreId, localProject.id, { mode: "publish", stock, price_override_brl: price });
+      // Auto-save unsaved edits (photo hides, extra photos, etc.) before publishing
+      let savedProject = localProject;
+      if (editing && salesDraft) {
+        const updated = await handleSave();
+        if (updated) savedProject = updated;
+      }
+      const activeSalesForPublish = savedProject.sales_profile;
+      const stock = activeSalesForPublish?.default_stock ?? 10;
+      const price = activeSalesForPublish?.unit_price_brl ?? activeSalesForPublish?.suggested_price_50_margin_brl ?? 80.0;
+      const result = await buildPublicationDraft(selectedStoreId, savedProject.id, { mode: "publish", stock, price_override_brl: price });
       setPublishDraft(result);
     } catch (error) {
       setDraftError(error instanceof Error ? error.message : "Falha ao publicar produto.");

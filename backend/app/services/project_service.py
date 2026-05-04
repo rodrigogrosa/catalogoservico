@@ -792,6 +792,19 @@ class ProjectService:
                 "source_ecosystem": manifest.get("source_ecosystem", "generic"),
                 "pipeline_version": "stored",
             }
+
+        # Auto-populate previews from filesystem when the DB field is empty.
+        # This happens for older projects or when the pipeline ran without storing previews.
+        if not manifest.get("previews"):
+            slug = manifest.get("slug", "")
+            version_name = manifest.get("id", project_id)
+            previews_dir = self.settings.storage_root / slug / version_name / "previews"
+            if previews_dir.is_dir():
+                try:
+                    manifest["previews"] = self.collect_previews_fast(previews_dir)
+                except Exception:  # noqa: BLE001
+                    pass  # Non-critical: proceed with empty previews rather than failing
+
         return ProjectDetailResponse(**manifest)
 
     def delete_project(self, project_id: str) -> bool:
