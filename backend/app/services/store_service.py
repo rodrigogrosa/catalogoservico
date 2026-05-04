@@ -707,7 +707,22 @@ class StoreService:
 
         previews = list(project.get("previews", []) or [])
         # Use all previews — marketplace_preview filtering was too restrictive and excluded real photos
-        raw_paths = [project.get("preview_url")] + [item.get("path") for item in previews]
+        preview_url = project.get("preview_url")
+        raw_paths: list[str | None] = [preview_url] + [item.get("path") for item in previews]
+
+        # When previews array is empty (common — DB only stores preview_url), scan the
+        # preview directory on filesystem to find all sibling images automatically.
+        if not previews and preview_url and isinstance(preview_url, str) and preview_url.startswith("/storage/"):
+            _rel = preview_url[len("/storage/"):]          # e.g. slug/slug_v001/previews/file.jpg
+            _fs_dir = self.settings.storage_root / Path(_rel).parent
+            _img_suffixes = {".png", ".jpg", ".jpeg", ".webp"}
+            if _fs_dir.is_dir():
+                for _f in sorted(_fs_dir.iterdir()):
+                    if _f.suffix.lower() in _img_suffixes:
+                        _sibling_url_path = "/storage/" + _f.relative_to(self.settings.storage_root).as_posix()
+                        if _sibling_url_path != preview_url:  # preview_url already first
+                            raw_paths.append(_sibling_url_path)
+
         candidate_bases = self.image_base_url_candidates(image_base_url, store)
         primary_base = candidate_bases[0] if candidate_bases else self.settings.public_backend_origin.rstrip("/")
         public_paths: list[str] = []
