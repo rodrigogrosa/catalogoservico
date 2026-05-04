@@ -1,3 +1,4 @@
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from time import perf_counter
@@ -16,6 +17,18 @@ _llm_cache: dict[str, object] = {}
 _LLM_CACHE_TTL_SECONDS = 60
 
 
+def _git_commit() -> str:
+    """Retorna hash curto do commit atual (7 chars) ou 'unknown'."""
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            stderr=subprocess.DEVNULL,
+            timeout=2,
+        ).decode().strip()
+    except Exception:  # noqa: BLE001
+        return "unknown"
+
+
 @router.get("/health")
 async def health() -> dict[str, object]:
     """Health check leve — sem I/O externo. Usado pelo load balancer e Docker healthcheck."""
@@ -24,6 +37,7 @@ async def health() -> dict[str, object]:
         "status": "ok",
         "environment": settings.app_env,
         "pipeline_version": settings.pipeline_version,
+        "git_commit": _git_commit(),
         "timestamp": datetime.now(tz=timezone.utc).isoformat(),
     }
 
