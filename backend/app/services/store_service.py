@@ -996,6 +996,7 @@ class StoreService:
                 "authorization": f"Bearer {access_token}",
             },
         )
+        has_variations = bool(payload.get("variations"))
         try:
             with urlopen(request, timeout=30) as response:  # noqa: S310
                 body = response.read().decode("utf-8")
@@ -1003,7 +1004,7 @@ class StoreService:
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
             parsed = self.parse_mercado_livre_error_payload(detail)
-            if self.is_warning_only_mercado_livre_validation_error(parsed):
+            if self.is_warning_only_mercado_livre_validation_error(parsed, has_variations=has_variations):
                 return parsed
             raise ValueError(f"Mercado Livre API /items/validate falhou: HTTP {exc.code}: {detail}") from exc
         except URLError as exc:
@@ -1016,13 +1017,34 @@ class StoreService:
             return {}
         return parsed if isinstance(parsed, dict) else {}
 
-    def is_warning_only_mercado_livre_validation_error(self, payload: dict[str, Any]) -> bool:
+    # Codes that the ML validate endpoint raises when the category auto-generates variations
+    # internally. When WE don't send variations, these are safe to ignore.
+    _ML_VARIATION_AUTO_CODES = frozenset({
+        "item.variations.price.different",
+        "item.price.dropped",
+    })
+
+    def is_warning_only_mercado_livre_validation_error(
+        self, payload: dict[str, Any], *, has_variations: bool = False
+    ) -> bool:
         if payload.get("error") != "validation_error":
             return False
         causes = payload.get("cause")
         if not isinstance(causes, list) or not causes:
             return False
-        return all(isinstance(cause, dict) and str(cause.get("type", "")).lower() == "warning" for cause in causes)
+        for cause in causes:
+            if not isinstance(cause, dict):
+                return False
+            cause_type = str(cause.get("type", "")).lower()
+            cause_code = str(cause.get("code", ""))
+            if cause_type == "warning":
+                continue
+            # When we're NOT sending explicit variations, ML may auto-generate them
+            # internally and produce spurious price-mismatch errors. Safe to ignore.
+            if not has_variations and cause_code in self._ML_VARIATION_AUTO_CODES:
+                continue
+            return False
+        return True
 
     def mercado_livre_api_request(
         self,
