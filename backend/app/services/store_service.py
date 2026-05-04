@@ -603,11 +603,12 @@ class StoreService:
             }
             if ml_variations:
                 payload["variations"] = ml_variations
-                # ML rule: item.price must equal the highest variation price.
-                # If price_override_brl was set below max variation price, update it.
-                max_var_price = max(float(v.get("price", 0)) for v in ml_variations)
-                if max_var_price > 0:
-                    payload["price"] = round(max_var_price, 2)
+                # ML rule: ALL variation prices must be equal to item.price.
+                # When variation prices differ (e.g. "1 unit" vs "kit-10"), ML rejects with
+                # item.variations.price.different. Normalize all variation prices to item.price.
+                item_price = round(float(payload["price"]), 2)
+                for var in ml_variations:
+                    var["price"] = item_price
                 # ML rule: available_quantity at item level = sum of all variation quantities
                 payload["available_quantity"] = sum(int(v.get("available_quantity", 0)) for v in ml_variations)
                 # ML rule: any attribute ID used in variation.attribute_combinations

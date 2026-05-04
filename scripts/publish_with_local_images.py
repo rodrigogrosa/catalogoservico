@@ -200,7 +200,7 @@ def get_draft_payload(token: str, project_id: str, picture_ids: list[str]) -> di
         return None
 
 
-def publish_directly_via_ml(ml_token: str, draft_result: dict) -> None:
+def publish_directly_via_ml(ml_token: str, draft_result: dict, picture_ids: list[str]) -> None:
     """Publica diretamente na API do ML usando o payload do rascunho (bypassa validação do backend)."""
     payload = draft_result.get("payload") or {}
     if not payload:
@@ -214,16 +214,27 @@ def publish_directly_via_ml(ml_token: str, draft_result: dict) -> None:
                      "_pre_uploaded_picture_ids"}
     }
 
-    # Fix de preço: quando há variations, item.price deve ser max(variation prices)
-    variations = ml_payload.get("variations") or []
+    # Substituir pictures por IDs já enviados ao ML
+    if picture_ids:
+        ml_payload["pictures"] = [{"id": pid} for pid in picture_ids]
+    
+    # Fix de preço e quantidades quando há variations
+    variations = list(ml_payload.get("variations") or [])
     if variations:
-        max_price = max(float(v.get("price", 0)) for v in variations)
-        if max_price > 0:
-            old_price = ml_payload.get("price", "?")
-            ml_payload["price"] = round(max_price, 2)
-            if old_price != ml_payload["price"]:
-                print(f"  ℹ️  Preço ajustado: {old_price} → {ml_payload['price']} (max variation price)")
+        # ML exige que todos os preços de variação sejam iguais a item.price
+        # Normalizar todos para item.price
+        item_price = float(ml_payload.get("price", 80.0))
+        for var in variations:
+            var["price"] = round(item_price, 2)
         ml_payload["available_quantity"] = sum(int(v.get("available_quantity", 0)) for v in variations)
+        ml_payload["variations"] = variations
+        print(f"  ℹ️  Preços de variações normalizados para item.price={item_price}")
+
+        # Cada variação precisa de picture_ids para categoria MLB439316
+        if picture_ids:
+            for var in variations:
+                var["picture_ids"] = picture_ids
+            print(f"  ℹ️  {len(picture_ids)} picture_ids atribuídos a {len(variations)} variações")
 
     print(f"  ℹ️  Publicando direto na API ML com {len(ml_payload)} campos...")
     body = json.dumps(ml_payload).encode()
@@ -284,7 +295,7 @@ def publish_project(token: str, project_id: str, picture_ids: list[str], dry_run
                 print("\n  ℹ️  Ativando Estratégia C: publicação direta via ML API (bypassa validação)...")
                 draft = get_draft_payload(token, project_id, picture_ids)
                 if draft:
-                    publish_directly_via_ml(ml_token, draft)
+                    publish_directly_via_ml(ml_token, draft, picture_ids)
             elif variation_error and not ml_token:
                 print("\n  ℹ️  Para contornar erro de variações, obtenha o ML token e use estratégia C.")
     except HTTPError as exc:
