@@ -206,6 +206,28 @@ async def upload_image_to_ml(
     return result
 
 
+@router.get("/{store_id}/ml-token")
+async def get_ml_token(
+    store_id: str,
+    current_user: AuthUser = Depends(require_permission("stores.manage")),
+    service: StoreService = Depends(get_store_service),
+) -> dict[str, str]:
+    """Retorna o ML access_token da loja para uso em scripts autorizados.
+
+    Requer permissão stores.manage. Apenas o dono da loja pode acessar.
+    """
+    store = next(
+        (s for s in service.load_store_records() if s.get("id") == store_id and s.get("owner_username") == current_user.username),
+        None,
+    )
+    if store is None:
+        raise HTTPException(status_code=404, detail="Loja não encontrada.")
+    access_token = str(store.get("credentials", {}).get("access_token", "")).strip()
+    if not access_token:
+        raise HTTPException(status_code=400, detail="ML access_token ausente.")
+    return {"access_token": access_token, "store_id": store_id}
+
+
 def build_oauth_callback_html(title: str, message: str, success: bool) -> str:
     color = "#13795b" if success else "#c54237"
     frontend_origin = get_settings().public_frontend_origin.rstrip("/")

@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Publica um projeto no Mercado Livre usando imagens ml_ready_*.jpg locais.
 
-Fluxo:
-  1. Autentica no backend
-  2. Lê os arquivos ml_ready_*.jpg da storage local
-  3. Faz upload de cada imagem via POST /stores/{store_id}/upload-to-ml
-  4. Publica o projeto com os picture IDs pré-enviados
+Fluxo adaptativo (tenta 3 estratégias em ordem):
+  A) backend /upload-to-ml — envia via servidor (requer deploy novo)
+  B) backend /ml-token     — obtém token e envia direto na API ML (requer deploy novo)
+  C) ERRO                  — instrui usuário a fazer redeploy no Northflank
 
 Uso:
     python scripts/publish_with_local_images.py --project deadpool-keych-ams-version_v001
@@ -18,10 +17,11 @@ import json
 import sys
 import time
 from pathlib import Path
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 BASE_URL = "https://app.euachei3d.com.br/api/v1"
+ML_PICTURES_URL = "https://api.mercadolibre.com/pictures/items/upload"
 STORE_ID = "1b2536a86e4044b5a1accafb926128a5"
 USERNAME = "rodrigogrosa"
 PASSWORD = "Violao2021@"
@@ -42,12 +42,9 @@ def login() -> str:
 
 def find_ml_ready_images(project_id: str) -> list[Path]:
     """Localiza arquivos ml_ready_*.jpg na storage local para o projeto."""
-    # Extrai o nome base do projeto (sem versão) para encontrar a pasta
-    # Ex: deadpool-keych-ams-version_v001 → deadpool-keych-ams-version
     parts = project_id.rsplit("_v", 1)
     project_slug = parts[0] if len(parts) == 2 else project_id
 
-    # Tenta caminhos possíveis
     candidates = [
         LOCAL_STORAGE / project_slug / project_id / "previews",
         LOCAL_STORAGE / project_id / "previews",
@@ -70,12 +67,20 @@ def find_ml_ready_images(project_id: str) -> list[Path]:
     return ml_files[:8]  # ML aceita no máximo 8 imagens por anúncio
 
 
-def upload_image(token: str, image_path: Path, dry_run: bool) -> str | None:
-    """Faz upload de uma imagem para o ML via backend. Retorna o picture ID."""
-    if dry_run:
-        print(f"    [DRY-RUN] uploadaria {image_path.name}")
-        return f"dry_run_{image_path.stem}"
+def _check_endpoint_exists(url: str, token: str) -> bool:
+    """Verifica se um endpoint existe (retorna False em 404, True caso contrário)."""
+    req = Request(url, method="GET", headers={"Authorization": f"Bearer {token}"})
+    try:
+        with urlopen(req, timeout=5) as _:
+            return True
+    except HTTPError as e:
+        return e.code != 404
+    except URLError:
+        return False
 
+
+def _upload_via_backend(token: str, image_path: Path) -> str | None:
+    """Envia imagem via POST /stores/{store_id}/upload-to-ml."""
     url = f"{BASE_URL}/stores/{STORE_ID}/upload-to-ml"
     with image_path.open("rb") as f:
         file_data = f.read()
@@ -96,9 +101,77 @@ def upload_image(token: str, image_path: Path, dry_run: bool) -> str | None:
             result = json.loads(resp.read())
             return result.get("id")
     except HTTPError as exc:
+        if exc.code == 404:
+            return None  # sinaliza que o endpoint não existe
         body_bytes = exc.read()
         print(f"    ❌ Erro ao enviar {image_path.name}: HTTP {exc.code} — {body_bytes.decode(errors='replace')[:200]}")
+        return "ERROR"
+
+
+def _get_ml_token_via_backend(token: str) -> str | None:
+    """Obtém o ML access_token via GET /stores/{store_id}/ml-token."""
+    url = f"{BASE_URL}/stores/{STORE_ID}/ml-token"
+    req = Request(url, method="GET", headers={"Authorization": f"Bearer {token}"})
+    try:
+        with urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read()).get("access_token")
+    except HTTPError as exc:
+        if exc.code == 404:
+            return None
+        body_bytes = exc.read()
+        print(f"    ❌ Erro ao obter ML token: HTTP {exc.code} — {body_bytes.decode(errors='replace')[:200]}")
         return None
+
+
+def _upload_directly_to_ml(ml_token: str, image_path: Path) -> str | None:
+    """Envia imagem diretamente à API do Mercado Livre (sem passar pelo backend)."""
+    with image_path.open("rb") as f:
+        file_data = f.read()
+
+    boundary = "----SnapMakerDirect" + str(int(time.time()))
+    body = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="file"; filename="{image_path.name}"\r\n'
+        f"Content-Type: image/jpeg\r\n\r\n"
+    ).encode("utf-8") + file_data + f"\r\n--{boundary}--\r\n".encode("utf-8")
+
+    req = Request(ML_PICTURES_URL, data=body, method="POST", headers={
+        "Authorization": f"Bearer {ml_token}",
+        "Content-Type": f"multipart/form-data; boundary={boundary}",
+        "Accept": "application/json",
+    })
+    try:
+        with urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read())
+            return result.get("id")
+    except HTTPError as exc:
+        body_bytes = exc.read()
+        print(f"    ❌ Erro direto ML {image_path.name}: HTTP {exc.code} — {body_bytes.decode(errors='replace')[:300]}")
+        return None
+
+
+def upload_image(token: str, image_path: Path, dry_run: bool) -> str | None:
+    """Faz upload de uma imagem. Tenta backend; se indisponível, tenta direto no ML."""
+    if dry_run:
+        print(f"    [DRY-RUN] uploadaria {image_path.name}")
+        return f"dry_run_{image_path.stem}"
+
+    # Estratégia A: via backend /upload-to-ml
+    result = _upload_via_backend(token, image_path)
+    if result is None:
+        # 404 → endpoint não deployado ainda; sinaliza para o chamador
+        return "ENDPOINT_NOT_DEPLOYED"
+    if result != "ERROR":
+        return result
+    return None  # erro real de upload
+
+
+def upload_image_direct(ml_token: str, image_path: Path, dry_run: bool) -> str | None:
+    """Faz upload diretamente na API do ML usando token já obtido."""
+    if dry_run:
+        print(f"    [DRY-RUN] uploadaria {image_path.name} direto no ML")
+        return f"dry_run_direct_{image_path.stem}"
+    return _upload_directly_to_ml(ml_token, image_path)
 
 
 def publish_project(token: str, project_id: str, picture_ids: list[str], dry_run: bool) -> None:
@@ -169,19 +242,81 @@ def main() -> None:
         size_kb = f.stat().st_size // 1024
         print(f"      {f.name} ({size_kb}KB)")
 
-    # 3. Upload das imagens para ML
+    # 3. Determinar estratégia de upload
     print(f"\n3. Enviando {len(ml_files)} imagens para Mercado Livre...")
+
+    # Testa estratégia A com a primeira imagem
+    strategy = "A"  # via backend
+    ml_token: str | None = None
+
+    if not args.dry_run:
+        test_result = _upload_via_backend(token, ml_files[0])
+        if test_result == "ENDPOINT_NOT_DEPLOYED":
+            print("   ℹ️  /upload-to-ml não disponível. Tentando obter token para upload direto...")
+            ml_token = _get_ml_token_via_backend(token)
+            if ml_token:
+                strategy = "B"  # direto no ML
+                print("   ✅ Token ML obtido — usando upload direto na API do ML")
+            else:
+                print()
+                print("   ❌ DEPLOY PENDENTE: os novos endpoints não estão em produção ainda.")
+                print()
+                print("   Para desbloquear, acesse o painel do Northflank e faça redeploy manual:")
+                print("   1. Acesse https://app.northflank.com")
+                print("   2. Projeto snapmaker3d-studio → Serviço backend")
+                print("   3. Clique em 'Redeploy' ou 'Trigger Build'")
+                print()
+                print("   Após o redeploy, verifique com:")
+                print("   curl -s https://app.euachei3d.com.br/api/v1/health | python3 -m json.tool")
+                print("   (deve aparecer campo 'git_commit')")
+                sys.exit(1)
+    else:
+        strategy = "DRY"
+
+    # Upload das imagens
     picture_ids: list[str] = []
-    for i, img in enumerate(ml_files, 1):
-        print(f"   [{i}/{len(ml_files)}] {img.name}...")
-        pid = upload_image(token, img, args.dry_run)
-        if pid:
-            picture_ids.append(pid)
-            print(f"        ✅ picture_id={pid}")
+
+    if args.dry_run:
+        # Dry-run: percorre todas as imagens simulando
+        for i, img in enumerate(ml_files, 1):
+            print(f"   [{i}/{len(ml_files)}] {img.name}...")
+            pid = upload_image(token, img, dry_run=True)
+            if pid:
+                picture_ids.append(pid)
+                print(f"        ✅ picture_id={pid}")
+
+    elif strategy == "A":
+        # Estratégia A: via backend /upload-to-ml
+        # Primeira imagem já foi testada e o resultado está em test_result
+        first_pid = test_result
+        print(f"   [1/{len(ml_files)}] {ml_files[0].name}...")
+        if first_pid and first_pid not in ("ENDPOINT_NOT_DEPLOYED", "ERROR", None):
+            picture_ids.append(first_pid)
+            print(f"        ✅ picture_id={first_pid}")
         else:
-            print(f"        ⚠️  Ignorando — upload falhou")
-        if not args.dry_run:
-            time.sleep(0.5)  # evita rate-limit
+            print(f"        ⚠️  Upload falhou")
+
+        for i, img in enumerate(ml_files[1:], 2):
+            print(f"   [{i}/{len(ml_files)}] {img.name}...")
+            pid = upload_image(token, img, dry_run=False)
+            if pid and pid not in ("ENDPOINT_NOT_DEPLOYED", "ERROR"):
+                picture_ids.append(pid)
+                print(f"        ✅ picture_id={pid}")
+            else:
+                print(f"        ⚠️  Upload falhou")
+            time.sleep(0.5)
+
+    else:
+        # Estratégia B: upload direto na API do ML
+        for i, img in enumerate(ml_files, 1):
+            print(f"   [{i}/{len(ml_files)}] {img.name}...")
+            pid = upload_image_direct(ml_token, img, dry_run=False)  # type: ignore[arg-type]
+            if pid:
+                picture_ids.append(pid)
+                print(f"        ✅ picture_id={pid}")
+            else:
+                print(f"        ⚠️  Upload falhou")
+            time.sleep(0.5)
 
     if not picture_ids:
         print("\n❌ Nenhuma imagem enviada com sucesso. Abortando publicação.")
