@@ -585,6 +585,14 @@ class StoreService:
                 {"id": "WARRANTY_TYPE", "value_name": _wtype_label},
                 {"id": "WARRANTY_TIME", "value_name": f"{_wduration} {_wunit_label}"},
             ]
+            # handling_time=0 = envio no mesmo dia (ML corta automaticamente às ~12h)
+            ml_shipping = {
+                "mode": "me2",
+                "local_pick_up": False,
+                "free_shipping": True,
+                "logistic_type": "drop_off",
+                "handling_time": 0,
+            }
             payload: dict[str, Any] = {
                 "title": ml_title,
                 "category_id": category_id,
@@ -596,6 +604,7 @@ class StoreService:
                 "listing_type_id": store.get("settings", {}).get("listing_type_id", "gold_special"),
                 "pictures": [{"source": image} for image in images],
                 "sale_terms": ml_sale_terms,
+                "shipping": ml_shipping,
                 "description_plain_text": description,
                 "attributes": self.build_mercado_livre_attributes(category_id, project, channel),
                 "images": images,
@@ -831,7 +840,7 @@ class StoreService:
         item_payload = {
             key: value
             for key, value in product_payload.items()
-            if key in {"title", "category_id", "price", "currency_id", "available_quantity", "buying_mode", "condition", "listing_type_id", "pictures", "attributes", "variations", "sale_terms"}
+            if key in {"title", "category_id", "price", "currency_id", "available_quantity", "buying_mode", "condition", "listing_type_id", "pictures", "attributes", "variations", "sale_terms", "shipping"}
         }
         # Fall back to store-level sale_terms only if not already built from the project
         if not item_payload.get("sale_terms"):
