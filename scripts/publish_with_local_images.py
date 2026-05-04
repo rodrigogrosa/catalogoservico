@@ -211,8 +211,19 @@ def publish_directly_via_ml(ml_token: str, draft_result: dict) -> None:
     ml_payload = {
         k: v for k, v in payload.items()
         if k not in {"images", "description_plain_text", "category_prediction_applied",
-                     "_pre_uploaded_picture_ids", "category_prediction_applied"}
+                     "_pre_uploaded_picture_ids"}
     }
+
+    # Fix de preço: quando há variations, item.price deve ser max(variation prices)
+    variations = ml_payload.get("variations") or []
+    if variations:
+        max_price = max(float(v.get("price", 0)) for v in variations)
+        if max_price > 0:
+            old_price = ml_payload.get("price", "?")
+            ml_payload["price"] = round(max_price, 2)
+            if old_price != ml_payload["price"]:
+                print(f"  ℹ️  Preço ajustado: {old_price} → {ml_payload['price']} (max variation price)")
+        ml_payload["available_quantity"] = sum(int(v.get("available_quantity", 0)) for v in variations)
 
     print(f"  ℹ️  Publicando direto na API ML com {len(ml_payload)} campos...")
     body = json.dumps(ml_payload).encode()
@@ -232,7 +243,7 @@ def publish_directly_via_ml(ml_token: str, draft_result: dict) -> None:
     except HTTPError as exc:
         body_bytes = exc.read()
         detail = body_bytes.decode(errors='replace')
-        print(f"  ❌ Erro ML POST /items: HTTP {exc.code} — {detail[:500]}")
+        print(f"  ❌ Erro ML POST /items: HTTP {exc.code} — {detail[:800]}")
 
 
 def publish_project(token: str, project_id: str, picture_ids: list[str], dry_run: bool, ml_token: str | None = None) -> None:
