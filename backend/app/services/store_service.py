@@ -785,6 +785,23 @@ class StoreService:
             order_full_set = set(full_order)
             rest = [u for u in deduped if u not in order_full_set]
             deduped = in_order + rest
+        else:
+            # No explicit order — sort by score, matching the frontend's adPhotoScore logic.
+            # This ensures the ML cover image equals the "Principal" shown in the ad panel.
+            def _photo_score(url: str) -> int:
+                v = url.lower()
+                score = 0
+                if "marketplace_01" in v: score += 120
+                elif "marketplace_02" in v: score += 100
+                elif "marketplace_03" in v: score += 90
+                elif "marketplace_" in v: score += 70
+                if "hero" in v: score += 35
+                if "lifestyle" in v: score += 30
+                if "dimensions" in v: score += 20
+                if "side" in v: score += 10
+                if "thumbnail" in v: score -= 12
+                return score
+            deduped.sort(key=_photo_score, reverse=True)
         return deduped
 
     def resolve_local_product_images(self, project: dict[str, Any]) -> list[str]:

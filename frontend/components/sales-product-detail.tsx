@@ -74,9 +74,6 @@ export function SalesProductDetail({ project }: Props) {
   const [storeSettingsMessage, setStoreSettingsMessage] = useState<string | null>(null);
   const [categoryId, setCategoryId] = useState("");
 
-  const imageUrl = fileUrl(localProject.preview_url);
-  const hasImagePreview = imageUrl ? /\.(png|jpe?g|webp)(\?.*)?$/i.test(imageUrl) : false;
-
   // active display data — in edit mode show draft values
   const activeSales = editing ? salesDraft : sales;
   const channels = useMemo(() => activeSales?.marketplace_attributes ?? [], [activeSales]);
@@ -84,6 +81,11 @@ export function SalesProductDetail({ project }: Props) {
     () => collectAdPhotos(localProject, activeSales?.photo_label_overrides ?? null, activeSales?.hidden_photo_paths ?? null, activeSales?.extra_ad_photos ?? null, activeSales?.photo_order ?? null),
     [localProject, activeSales],
   );
+
+  // The featured image in the product card must ALWAYS match adPhotos[0] (= the "Principal" the ML will receive).
+  // Fall back to preview_url only if no ad photos have been computed yet.
+  const imageUrl = adPhotos.length > 0 ? adPhotos[0].href : fileUrl(localProject.preview_url);
+  const hasImagePreview = imageUrl ? /\.(png|jpe?g|webp)(\?.*)?$/i.test(imageUrl) : false;
   const primary = channels[0];
 
   // ML title preview — reflects qty/variation state
