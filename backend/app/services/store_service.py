@@ -829,7 +829,11 @@ class StoreService:
         if not item_payload.get("sale_terms"):
             item_payload["sale_terms"] = store.get("settings", {}).get("sale_terms", [])
 
-        self.mercado_livre_validate_item(access_token, item_payload)
+        self.mercado_livre_validate_item(
+            access_token,
+            item_payload,
+            has_variations=bool(item_payload.get("variations")),
+        )
 
         created = self.mercado_livre_api_request(
             access_token=access_token,
@@ -985,7 +989,9 @@ class StoreService:
             raise ValueError("Mercado Livre não retornou id da imagem enviada.")
         return {"id": picture_id}
 
-    def mercado_livre_validate_item(self, access_token: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def mercado_livre_validate_item(
+        self, access_token: str, payload: dict[str, Any], *, has_variations: bool = False
+    ) -> dict[str, Any]:
         request = Request(
             "https://api.mercadolibre.com/items/validate",
             data=json.dumps(payload).encode("utf-8"),
@@ -996,7 +1002,6 @@ class StoreService:
                 "authorization": f"Bearer {access_token}",
             },
         )
-        has_variations = bool(payload.get("variations"))
         try:
             with urlopen(request, timeout=30) as response:  # noqa: S310
                 body = response.read().decode("utf-8")

@@ -91,7 +91,7 @@ def test_publish_includes_variations_in_item_payload(monkeypatch: pytest.MonkeyP
     )
     store = _make_fake_store()
 
-    monkeypatch.setattr(service, "mercado_livre_validate_item", lambda token, payload: {})
+    monkeypatch.setattr(service, "mercado_livre_validate_item", lambda token, payload, **kw: {})
     monkeypatch.setattr(service, "resolve_local_product_images", lambda p: [])
     monkeypatch.setattr(service, "upload_local_mercado_livre_pictures", lambda tok, paths: [{"id": "PIC1"}])
 
@@ -149,7 +149,7 @@ def test_publish_sends_warranty_sale_terms(monkeypatch: pytest.MonkeyPatch, tmp_
         "description_plain_text": "Desc",
     }
 
-    monkeypatch.setattr(service, "mercado_livre_validate_item", lambda tok, p: {})
+    monkeypatch.setattr(service, "mercado_livre_validate_item", lambda tok, p, **kw: {})
     monkeypatch.setattr(service, "resolve_local_product_images", lambda p: [])
 
     sent: list[dict] = []
@@ -190,7 +190,7 @@ def test_publish_uploads_local_files_instead_of_source_urls(monkeypatch: pytest.
         return [{"id": "ML_PIC_1"}]
 
     monkeypatch.setattr(service, "upload_local_mercado_livre_pictures", fake_upload)
-    monkeypatch.setattr(service, "mercado_livre_validate_item", lambda tok, p: {})
+    monkeypatch.setattr(service, "mercado_livre_validate_item", lambda tok, p, **kw: {})
 
     sent: list[dict] = []
 
@@ -263,7 +263,7 @@ def test_publish_variations_receive_picture_ids(monkeypatch: pytest.MonkeyPatch,
 
     monkeypatch.setattr(service, "resolve_local_product_images", lambda p: [str(tmp_path / "photo.jpg")])
     monkeypatch.setattr(service, "upload_local_mercado_livre_pictures", lambda tok, paths: [{"id": "ML_P1"}, {"id": "ML_P2"}])
-    monkeypatch.setattr(service, "mercado_livre_validate_item", lambda tok, p: {})
+    monkeypatch.setattr(service, "mercado_livre_validate_item", lambda tok, p, **kw: {})
 
     sent: list[dict] = []
 
@@ -310,7 +310,7 @@ def test_publish_variations_receive_picture_ids_from_source_url_fallback(monkeyp
         return [{"id": "ML_FROM_URL_1"}]
 
     monkeypatch.setattr(service, "_upload_pictures_from_urls", fake_upload_from_urls)
-    monkeypatch.setattr(service, "mercado_livre_validate_item", lambda tok, p: {})
+    monkeypatch.setattr(service, "mercado_livre_validate_item", lambda tok, p, **kw: {})
 
     sent: list[dict] = []
 
@@ -342,7 +342,7 @@ def test_publish_variations_receive_picture_ids_from_source_url_fallback(monkeyp
     }
 
     monkeypatch.setattr(service, "resolve_local_product_images", lambda p: [])
-    monkeypatch.setattr(service, "mercado_livre_validate_item", lambda tok, p: {})
+    monkeypatch.setattr(service, "mercado_livre_validate_item", lambda tok, p, **kw: {})
 
     call_count = {"n": 0}
 

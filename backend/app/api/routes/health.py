@@ -1,3 +1,4 @@
+import os
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,7 +19,27 @@ _LLM_CACHE_TTL_SECONDS = 60
 
 
 def _git_commit() -> str:
-    """Retorna hash curto do commit atual (7 chars) ou 'unknown'."""
+    """Retorna hash curto do commit atual (7 chars).
+
+    1. BUILD_COMMIT env var (injetada via ARG no Dockerfile)
+    2. Arquivo .build_commit (escrito pelo RUN no Dockerfile)
+    3. subprocess git (só funciona em dev local)
+    """
+    # 1. Env var direta
+    env_commit = os.environ.get("BUILD_COMMIT", "").strip()
+    if env_commit and env_commit != "unknown":
+        return env_commit[:7]
+
+    # 2. Arquivo gravado no build
+    try:
+        commit_file = os.environ.get("BUILD_COMMIT_FILE", "/app/backend/.build_commit")
+        val = Path(commit_file).read_text().strip()
+        if val and val != "unknown":
+            return val[:7]
+    except Exception:  # noqa: BLE001
+        pass
+
+    # 3. Fallback git (dev local)
     try:
         return subprocess.check_output(
             ["git", "rev-parse", "--short", "HEAD"],

@@ -10,6 +10,21 @@ RUN pip install --no-cache-dir -r /app/backend/requirements.txt
 
 COPY backend /app/backend
 
+# Injeta o hash do commit no momento do build (passado via --build-arg ou ARG padrão)
+# Northflank pode passar via COMMIT_SHA ou semelhante. Tente várias fontes.
+ARG BUILD_COMMIT=unknown
+ARG COMMIT_SHA=
+ARG GIT_COMMIT=
+# Prefere COMMIT_SHA (Northflank) > GIT_COMMIT > BUILD_COMMIT
+RUN if [ -n "$COMMIT_SHA" ]; then \
+      echo "$COMMIT_SHA" | cut -c1-7 > /app/backend/.build_commit; \
+    elif [ -n "$GIT_COMMIT" ]; then \
+      echo "$GIT_COMMIT" | cut -c1-7 > /app/backend/.build_commit; \
+    else \
+      echo "$BUILD_COMMIT" > /app/backend/.build_commit; \
+    fi
+ENV BUILD_COMMIT_FILE=/app/backend/.build_commit
+
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=5 CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health/ready', timeout=3)"
