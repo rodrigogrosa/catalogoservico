@@ -24,31 +24,17 @@ import { PERMISSIONS } from "@/lib/permissions";
 /** Catálogo de categorias do Mercado Livre usadas nesta loja.
  *  Confirmado via GET /categories/{id} — caminhos verificados na API. */
 const ML_CATEGORIES = [
-  {
-    id: "MLB439316",
-    label: "Chaveiros",
-    path: "Indústria e Comércio > Merchandising",
-  },
-  {
-    id: "MLB1839",
-    label: "Brinquedos / Figuras de Ação",
-    path: "Brinquedos e Hobbies > Bonecos e Bonecas",
-  },
-  {
-    id: "MLB186814",
-    label: "Estátua / Estatueta Decorativa",
-    path: "Casa e Decoração > Figuras Decorativas",
-  },
-  {
-    id: "MLB1637",
-    label: "Vasos Decorativos",
-    path: "Casa e Decoração > Figuras Decorativas",
-  },
-  {
-    id: "MLB272183",
-    label: "Acessórios / Organizadores",
-    path: "Casa e Decoração > Organização para Casa",
-  },
+  { id: "MLB439316",  label: "Chaveiros",               path: "Indústria e Comércio > Merchandising" },
+  { id: "MLB1839",    label: "Figuras de Ação",          path: "Brinquedos e Hobbies > Bonecos" },
+  { id: "MLB186814", label: "Estatueta Decorativa",     path: "Casa e Decoração > Figuras Decorativas" },
+  { id: "MLB2662",   label: "Escultura",                path: "Arte, Papelaria e Armarinho > Escultura" },
+  { id: "MLB1637",   label: "Vasos Decorativos",        path: "Casa e Decoração > Figuras Decorativas" },
+  { id: "MLB271427", label: "Porta Copos",              path: "Casa e Decoração > Mesa Posta" },
+  { id: "MLB186811", label: "Caixas Decorativas",       path: "Casa e Decoração > Organização" },
+  { id: "MLB272183", label: "Organizadores Escritório", path: "Casa e Decoração > Organização para Casa" },
+  { id: "MLB388338", label: "Organizadores de Mesa",    path: "Casa e Decoração > Organização para Casa" },
+  { id: "MLB49496",  label: "Suportes",                 path: "Eletrônicos > Acessórios" },
+  { id: "MLB439509", label: "Peças / Acessórios",       path: "Industria e Comércio > Ferramentas" },
 ] as const;
 
 type Props = {
@@ -157,7 +143,13 @@ export function SalesProductDetail({ project }: Props) {
     setSalesDraft((prev) => {
       if (!prev) return prev;
       const vars = [...(prev.variations ?? [])];
-      vars[idx] = { ...vars[idx], ...updates };
+      const current = { ...vars[idx], ...updates };
+      // Auto-calculate price when quantity changes: price = unit_price × quantity
+      if ("quantity" in updates && updates.quantity !== undefined) {
+        const unitPrice = prev.unit_price_brl ?? prev.suggested_price_50_margin_brl;
+        current.price_brl = Math.round(unitPrice * updates.quantity * 100) / 100;
+      }
+      vars[idx] = current;
       return { ...prev, variations: vars };
     });
   }
@@ -166,15 +158,16 @@ export function SalesProductDetail({ project }: Props) {
     setSalesDraft((prev) => {
       if (!prev) return prev;
       const base = prev.sku ?? "SM3D-NOVO";
-      const unitPrice = prev.suggested_price_50_margin_brl;
+      const unitPrice = prev.unit_price_brl ?? prev.suggested_price_50_margin_brl;
       const kitIdx = (prev.variations?.filter((v) => v.sku.includes("-KIT")).length ?? 0) + 1;
+      const qty = 10;
       const newVar: SalesProfileVariation = {
         sku: `${base}-KIT${kitIdx === 1 ? "10" : kitIdx * 10}`,
-        name: "Kit 10 unidades (10% desconto)",
-        quantity: 10,
+        name: `Kit ${qty} unidades`,
+        quantity: qty,
         stock: 320,
-        price_brl: Math.round(unitPrice * 10 * 0.9 * 100) / 100,
-        description: "Lote de 10 peças iguais ou em cores variadas — 10% de desconto sobre o unitário.",
+        price_brl: Math.round(unitPrice * qty * 100) / 100,
+        description: `Lote de ${qty} peças iguais ou em cores variadas.`,
       };
       return { ...prev, variations: [...(prev.variations ?? []), newVar] };
     });
@@ -199,9 +192,12 @@ export function SalesProductDetail({ project }: Props) {
 
 
   useEffect(() => {
-    setCategoryId(typeof selectedStore?.settings?.category_id === "string" ? selectedStore.settings.category_id : "");
+    // Prefer product-level category, then fall back to store-level settings
+    const productCat = typeof sales?.ml_category_id === "string" ? sales.ml_category_id : "";
+    const storeCat = typeof selectedStore?.settings?.category_id === "string" ? selectedStore.settings.category_id : "";
+    setCategoryId(productCat || storeCat);
     setStoreSettingsMessage(null);
-  }, [selectedStoreId, selectedStore]);
+  }, [selectedStoreId, selectedStore, sales?.ml_category_id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -293,7 +289,9 @@ export function SalesProductDetail({ project }: Props) {
     setDraftLoading(true);
     setDraftError(null);
     try {
-      const result = await buildPublicationDraft(selectedStoreId, localProject.id, { mode: "publish", stock: 10, price_override_brl: 80.0 });
+      const stock = sales?.default_stock ?? 10;
+      const price = sales?.unit_price_brl ?? sales?.suggested_price_50_margin_brl ?? 80.0;
+      const result = await buildPublicationDraft(selectedStoreId, localProject.id, { mode: "publish", stock, price_override_brl: price });
       setPublishDraft(result);
     } catch (error) {
       setDraftError(error instanceof Error ? error.message : "Falha ao publicar produto.");
@@ -436,6 +434,14 @@ export function SalesProductDetail({ project }: Props) {
             placeholder="Ex.: SM3D-PRODUTO-001"
           />
           <EditableField
+            label="Preço unitário (R$)"
+            editing={editing}
+            type="number"
+            value={editing ? String(salesDraft?.unit_price_brl ?? salesDraft?.suggested_price_50_margin_brl ?? 0) : String(sales.unit_price_brl ?? sales.suggested_price_50_margin_brl ?? 0)}
+            onChange={(v) => setSalesField("unit_price_brl", Number(v))}
+            placeholder="Ex.: 80.00"
+          />
+          <EditableField
             label="Estoque padrão"
             editing={editing}
             type="number"
@@ -459,6 +465,44 @@ export function SalesProductDetail({ project }: Props) {
             }
             placeholder="1"
           />
+        </div>
+        {/* Categoria Mercado Livre por produto */}
+        <div className="mt-5">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400 mb-2">Categoria no Mercado Livre</p>
+          {editing ? (
+            <>
+              <div className="flex flex-wrap gap-2 mb-2">
+                {ML_CATEGORIES.map((cat) => (
+                  <button
+                    key={cat.id}
+                    type="button"
+                    onClick={() => setSalesField("ml_category_id", cat.id)}
+                    className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+                      salesDraft?.ml_category_id === cat.id
+                        ? "border-orange-500 bg-orange-500 text-white"
+                        : "border-slate-900/10 bg-white text-slate-700 hover:border-orange-400 hover:text-orange-700"
+                    }`}
+                  >
+                    {cat.label}
+                  </button>
+                ))}
+              </div>
+              <input
+                value={salesDraft?.ml_category_id ?? ""}
+                onChange={(e) => setSalesField("ml_category_id", e.target.value)}
+                placeholder="Ex.: MLB439316 (ou clique acima)"
+                className="w-full rounded-[1rem] border border-slate-900/10 bg-white px-4 py-2.5 text-sm text-slate-950 outline-none focus:border-orange-500"
+              />
+              <p className="mt-1 text-xs text-slate-500">Salvo junto com o produto — cada produto pode ter sua categoria.</p>
+            </>
+          ) : (
+            <p className="text-sm text-slate-700">
+              {sales.ml_category_id
+                ? <><span className="font-semibold text-orange-700">{ML_CATEGORIES.find((c) => c.id === sales.ml_category_id)?.label ?? sales.ml_category_id}</span> <span className="text-slate-400">({sales.ml_category_id})</span></>
+                : <span className="text-slate-400">Não definida — será detectada automaticamente ao publicar.</span>
+              }
+            </p>
+          )}
         </div>
         {(editing ? salesDraft?.warranty : sales.warranty) ? (
           <p className="mt-3 text-sm text-slate-600">
@@ -785,36 +829,34 @@ function StorePublicationPanel({
                     <StoreSummaryLine label="Status" value={selectedStore.status} />
                   </div>
 
+                  {/* Categoria do produto — somente override por loja se a categoria não vier do produto */}
                   <div className="mt-4 rounded-[1.2rem] border border-slate-900/10 bg-slate-50 p-4">
-                    <label className="block">
-                      <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Categoria MLB do produto</span>
-                      {/* Quick-pick: catálogo de categorias usadas nesta loja */}
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {ML_CATEGORIES.map((cat) => (
-                          <button
-                            key={cat.id}
-                            type="button"
-                            onClick={() => onCategoryIdChange(cat.id)}
-                            className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
-                              categoryId === cat.id
-                                ? "border-orange-500 bg-orange-500 text-white"
-                                : "border-slate-900/10 bg-white text-slate-700 hover:border-orange-400 hover:text-orange-700"
-                            }`}
-                          >
-                            {cat.label}
-                          </button>
-                        ))}
-                      </div>
-                      <input
-                        value={categoryId}
-                        onChange={(event) => onCategoryIdChange(event.target.value)}
-                        placeholder="Ex.: MLB439316"
-                        className="mt-3 w-full rounded-[1rem] border border-slate-900/10 bg-white px-4 py-3 text-base text-slate-950 outline-none focus:border-orange-500"
-                      />
-                    </label>
-                    <p className="mt-1 text-xs leading-5 text-slate-500">
-                      Clique numa categoria acima ou digite o ID manualmente.
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400 mb-2">Categoria MLB (override por loja)</p>
+                    <p className="mb-3 text-xs text-slate-500">
+                      A categoria definida no produto tem prioridade. Use este campo só se quiser sobrescrever para esta loja específica.
                     </p>
+                    <div className="flex flex-wrap gap-2">
+                      {ML_CATEGORIES.map((cat) => (
+                        <button
+                          key={cat.id}
+                          type="button"
+                          onClick={() => onCategoryIdChange(cat.id)}
+                          className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+                            categoryId === cat.id
+                              ? "border-orange-500 bg-orange-500 text-white"
+                              : "border-slate-900/10 bg-white text-slate-700 hover:border-orange-400 hover:text-orange-700"
+                          }`}
+                        >
+                          {cat.label}
+                        </button>
+                      ))}
+                    </div>
+                    <input
+                      value={categoryId}
+                      onChange={(event) => onCategoryIdChange(event.target.value)}
+                      placeholder="Ex.: MLB439316"
+                      className="mt-3 w-full rounded-[1rem] border border-slate-900/10 bg-white px-4 py-3 text-base text-slate-950 outline-none focus:border-orange-500"
+                    />
                     <div className="mt-3 flex flex-wrap gap-3">
                       <button
                         type="button"
@@ -822,7 +864,7 @@ function StorePublicationPanel({
                         disabled={saveStoreLoading}
                         className="rounded-full border border-slate-900/10 bg-white px-4 py-2.5 text-sm font-semibold text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
                       >
-                        {saveStoreLoading ? "Salvando..." : "Salvar categoria"}
+                        {saveStoreLoading ? "Salvando..." : "Salvar override da loja"}
                       </button>
                       {storeSettingsMessage ? <span className="pill">{storeSettingsMessage}</span> : null}
                     </div>

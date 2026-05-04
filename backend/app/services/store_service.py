@@ -556,14 +556,25 @@ class StoreService:
 
         if connector.marketplace == "mercado_livre":
             stored_category_id = str(store.get("settings", {}).get("category_id", "")).strip()
-            category_id = stored_category_id if self.looks_like_mercado_livre_category_id(stored_category_id) else self.predict_mercado_livre_category_id(store, project, title, channel)
+            # Prefer category set per product (ml_category_id in sales_profile),
+            # then fall back to store-level category, then auto-predict.
+            product_category_id = str(sales.get("ml_category_id") or "").strip()
+            if self.looks_like_mercado_livre_category_id(product_category_id):
+                category_id = product_category_id
+            elif self.looks_like_mercado_livre_category_id(stored_category_id):
+                category_id = stored_category_id
+            else:
+                category_id = self.predict_mercado_livre_category_id(store, project, title, channel)
             images = self.limit_mercado_livre_images(category_id, images)
             ml_title = self._truncate_ml_title(title)
             variations_data = list(sales.get("variations") or [])
+            # unit_price_brl: base price for a single unit (from sales_profile or item price)
+            unit_price = float(sales.get("unit_price_brl") or price)
             if variations_data:
                 ml_variations = [
                     {
-                        "price": round(float(v.get("price_brl", price)), 2),
+                        # price = unit_price × quantity (kit pricing)
+                        "price": round(float(v.get("price_brl") or unit_price * int(v.get("quantity", 1))), 2),
                         "available_quantity": int(v.get("stock", request.stock)),
                         "seller_custom_field": str(v.get("sku", "")),
                         "attribute_combinations": [

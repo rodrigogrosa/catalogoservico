@@ -79,6 +79,8 @@ export type SalesProfile = {
   copy_source: string;
   sku?: string | null;
   default_stock?: number | null;
+  ml_category_id?: string | null;
+  unit_price_brl?: number | null;
   warranty?: SalesProfileWarranty | null;
   variations?: SalesProfileVariation[] | null;
   // Photo ad overrides — stored here so project.previews stays untouched.
