@@ -495,7 +495,9 @@ class ProjectService:
             manifest["sales_profile"] = updates["sales_profile"]
         manifest["updated_at"] = now
         self.storage.save_manifest(manifest)
-        return ProjectDetailResponse(**manifest)
+        # Use get_project so previews are auto-populated from filesystem (same as GET endpoint)
+        refreshed = self.get_project(project_id)
+        return refreshed if refreshed is not None else ProjectDetailResponse(**manifest)
 
     # ------------------------------------------------------------------
     # Backfill: generate sales_profile for all existing projects
