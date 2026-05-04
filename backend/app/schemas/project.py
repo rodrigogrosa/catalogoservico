@@ -119,6 +119,7 @@ class SalesProfile(BaseModel):
     marketplace_attributes: list[MarketplaceAttribute] = Field(default_factory=list)
     sku: str | None = None
     default_stock: int | None = None
+    default_quantity: int = 1
     ml_category_id: str | None = None
     unit_price_brl: float | None = None
     warranty: SalesProfileWarranty | None = None

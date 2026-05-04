@@ -567,6 +567,7 @@ class StoreService:
                 category_id = self.predict_mercado_livre_category_id(store, project, title, channel)
             images = self.limit_mercado_livre_images(category_id, images)
             ml_title = self._truncate_ml_title(title)
+            default_quantity = int(sales.get("default_quantity") or 1)
             variations_data = list(sales.get("variations") or [])
             # unit_price_brl: base price for a single unit (from sales_profile or item price)
             unit_price = float(sales.get("unit_price_brl") or price)
@@ -585,6 +586,10 @@ class StoreService:
                 ]
             else:
                 ml_variations = []
+                # Single-option listing: default_quantity drives title, price and description
+                if default_quantity > 1:
+                    ml_title = self._truncate_ml_title(f"Kit {default_quantity}x {title}")
+                    price = round(unit_price * default_quantity, 2)
             # Build warranty sale_terms from sales_profile
             warranty_data = sales.get("warranty") or {}
             _wtype = str(warranty_data.get("type") or "seller")
@@ -604,6 +609,16 @@ class StoreService:
                 "logistic_type": "drop_off",
                 "handling_time": 0,
             }
+            # Auto-inject quantity context into description
+            if variations_data:
+                _qty_lines = []
+                for _v in variations_data:
+                    _vname = _v.get("name") or f"Kit {_v.get('quantity', 1)} un"
+                    _vqty = _v.get("quantity", 1)
+                    _qty_lines.append(f"  \u2022 {_vname}: {_vqty} unidade(s)")
+                description = description + "\n\nOpções de quantidade disponíveis:\n" + "\n".join(_qty_lines)
+            elif default_quantity > 1:
+                description = description + f"\n\nEste anúncio inclui {default_quantity} unidades do produto."
             payload: dict[str, Any] = {
                 "title": ml_title,
                 "category_id": category_id,

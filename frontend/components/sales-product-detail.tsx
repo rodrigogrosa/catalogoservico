@@ -86,6 +86,22 @@ export function SalesProductDetail({ project }: Props) {
   );
   const primary = channels[0];
 
+  // ML title preview — reflects qty/variation state
+  const mlTitlePreview = useMemo(() => {
+    const baseName = (editing ? nameDraft : localProject.name) || "Produto";
+    const vars = activeSales?.variations ?? [];
+    const defaultQty = activeSales?.default_quantity ?? 1;
+    let preview: string;
+    if (vars.length === 1 && (vars[0].quantity ?? 1) > 1) {
+      preview = `Kit ${vars[0].quantity}x ${baseName}`;
+    } else if (vars.length === 0 && defaultQty > 1) {
+      preview = `Kit ${defaultQty}x ${baseName}`;
+    } else {
+      preview = baseName;
+    }
+    return preview.length > 60 ? preview.slice(0, 57) + "..." : preview;
+  }, [editing, nameDraft, localProject.name, activeSales?.variations, activeSales?.default_quantity]);
+
   const publicationStores = useMemo(
     () => stores.filter((s) => s.status === "configured" || s.status === "needs_credentials" || s.status === "draft"),
     [stores],
@@ -144,10 +160,14 @@ export function SalesProductDetail({ project }: Props) {
       if (!prev) return prev;
       const vars = [...(prev.variations ?? [])];
       const current = { ...vars[idx], ...updates };
-      // Auto-calculate price when quantity changes: price = unit_price × quantity
+      // Auto-calc price, name and description when quantity changes
       if ("quantity" in updates && updates.quantity !== undefined) {
         const unitPrice = prev.unit_price_brl ?? prev.suggested_price_50_margin_brl;
-        current.price_brl = Math.round(unitPrice * updates.quantity * 100) / 100;
+        const qty = updates.quantity;
+        current.price_brl = Math.round(unitPrice * qty * 100) / 100;
+        current.name = qty <= 1 ? "1 unidade" : `Kit ${qty} unidades`;
+        current.description = qty <= 1 ? "Unidade individual." : `Kit com ${qty} peças.`;
+        current.sku = `${prev.sku ?? "SM3D"}-KIT${qty}`;
       }
       vars[idx] = current;
       return { ...prev, variations: vars };
@@ -159,15 +179,18 @@ export function SalesProductDetail({ project }: Props) {
       if (!prev) return prev;
       const base = prev.sku ?? "SM3D-NOVO";
       const unitPrice = prev.unit_price_brl ?? prev.suggested_price_50_margin_brl;
-      const kitIdx = (prev.variations?.filter((v) => v.sku.includes("-KIT")).length ?? 0) + 1;
-      const qty = 10;
+      // Smart qty: 5 → 10 → 20 → double last
+      const existingQtys = (prev.variations ?? []).map((v) => v.quantity);
+      const nextQty = existingQtys.length === 0 ? 5
+        : existingQtys.length === 1 ? 10
+        : Math.min(Math.max(...existingQtys) * 2, 100);
       const newVar: SalesProfileVariation = {
-        sku: `${base}-KIT${kitIdx === 1 ? "10" : kitIdx * 10}`,
-        name: `Kit ${qty} unidades`,
-        quantity: qty,
+        sku: `${base}-KIT${nextQty}`,
+        name: `Kit ${nextQty} unidades`,
+        quantity: nextQty,
         stock: 320,
-        price_brl: Math.round(unitPrice * qty * 100) / 100,
-        description: `Lote de ${qty} peças iguais ou em cores variadas.`,
+        price_brl: Math.round(unitPrice * nextQty * 100) / 100,
+        description: `Kit com ${nextQty} peças.`,
       };
       return { ...prev, variations: [...(prev.variations ?? []), newVar] };
     });
@@ -417,12 +440,12 @@ export function SalesProductDetail({ project }: Props) {
         </div>
       </section>
 
-      {/* ── Identificação e Estoque ───────────────────────────────────────── */}
+      {/* ── Dados do Anúncio ─────────────────────────────────────────────── */}
       <section className="panel p-5 md:p-6">
         <div className="flex items-center justify-between">
           <div>
-            <p className="section-kicker">Identificação e Estoque</p>
-            <h2 className="mt-2 text-2xl font-semibold text-slate-950">SKU, Estoque e Garantia</h2>
+            <p className="section-kicker">Dados do Anúncio</p>
+            <h2 className="mt-2 text-2xl font-semibold text-slate-950">Identificação, Preço e Estoque</h2>
           </div>
         </div>
         <div className="mt-5 grid gap-4 sm:grid-cols-3">
@@ -511,63 +534,122 @@ export function SalesProductDetail({ project }: Props) {
         ) : null}
       </section>
 
-      {/* ── Variações ────────────────────────────────────────────────────── */}
+      {/* ── Quantidade para venda ─────────────────────────────────────────── */}
       <section className="panel p-5 md:p-6">
         <div className="flex items-center justify-between">
           <div>
-            <p className="section-kicker">Variações</p>
-            <h2 className="mt-2 text-2xl font-semibold text-slate-950">Opções de venda</h2>
+            <p className="section-kicker">Quantidade para venda</p>
+            <h2 className="mt-2 text-2xl font-semibold text-slate-950">Quantas unidades por pedido?</h2>
+            <p className="mt-1 text-sm text-slate-500">A quantidade entra automaticamente no título, na descrição e nas características do anúncio.</p>
           </div>
           {editing ? (
             <button
               type="button"
               onClick={addVariation}
-              className="rounded-full border border-blue-300 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-800 hover:bg-blue-100"
+              className="rounded-full border border-blue-300 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-800 hover:bg-blue-100 shrink-0"
             >
-              + Adicionar variação
+              + Opção de kit
             </button>
           ) : null}
         </div>
+
+        {/* Quantidade padrão + prévia do título */}
+        <div className="mt-5 grid gap-4 sm:grid-cols-2">
+          <div className="rounded-[1.3rem] border border-orange-200 bg-orange-50 p-4">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-orange-700 mb-1">Unidades por anúncio</p>
+            <p className="mb-3 text-xs text-slate-600">Quantas peças o comprador recebe em 1 pedido? (1 = unitário, 5 = kit de 5, etc.)</p>
+            {editing ? (
+              <input
+                type="number"
+                min="1"
+                value={salesDraft?.default_quantity ?? 1}
+                onChange={(e) => setSalesField("default_quantity", Math.max(1, Number(e.target.value)))}
+                className="w-full rounded-[0.8rem] border border-orange-300 bg-white px-3 py-2 text-xl font-bold text-slate-950 outline-none focus:border-orange-500"
+              />
+            ) : (
+              <p className="text-2xl font-bold text-orange-700">
+                {activeSales?.default_quantity ?? 1}
+                <span className="ml-2 text-sm font-medium text-slate-500">
+                  {(activeSales?.default_quantity ?? 1) === 1 ? "unidade" : "unidades"}
+                </span>
+              </p>
+            )}
+          </div>
+
+          <div className="rounded-[1.3rem] border border-slate-900/10 bg-white p-4">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400 mb-1">Prévia do título no ML</p>
+            <p className="mt-1 text-sm font-semibold text-slate-900 leading-6">{mlTitlePreview}</p>
+            <p className="mt-2 text-xs text-slate-500">
+              {(activeSales?.variations ?? []).length > 0
+                ? "Com múltiplas opções, o comprador escolhe a quantidade no anúncio."
+                : (activeSales?.default_quantity ?? 1) > 1
+                  ? `A descrição incluirá: "Este anúncio inclui ${activeSales?.default_quantity ?? 1} unidades do produto."`
+                  : "Altere a quantidade acima ou adicione opções de kit."}
+            </p>
+          </div>
+        </div>
+
+        {/* Opções de kit (variações) */}
         {((editing ? salesDraft?.variations : sales.variations) ?? []).length === 0 ? (
           <p className="mt-4 text-sm text-slate-500">
-            {editing ? "Clique em '+ Adicionar variação' para criar variações." : "Nenhuma variação cadastrada."}
+            {editing
+              ? "Clique em '+ Opção de kit' para oferecer múltiplas quantidades no mesmo anúncio."
+              : (activeSales?.default_quantity ?? 1) > 1
+                ? `Anúncio simples — ${activeSales?.default_quantity ?? 1} unidades por pedido.`
+                : "Anúncio simples — 1 unidade por pedido."}
           </p>
         ) : (
-          <div className="mt-5 grid gap-4 md:grid-cols-2">
-            {((editing ? salesDraft?.variations : sales.variations) ?? []).map((v, idx) => (
-              <div key={idx} className="rounded-[1.2rem] border border-slate-900/10 bg-white p-4">
-                {editing ? (
-                  <div className="space-y-3">
-                    <div className="grid grid-cols-2 gap-3">
-                      <EditableField label="SKU" editing value={v.sku} onChange={(val) => updateVariation(idx, { sku: val })} />
-                      <EditableField label="Nome" editing value={v.name} onChange={(val) => updateVariation(idx, { name: val })} />
-                      <EditableField label="Qtd" editing type="number" value={String(v.quantity)} onChange={(val) => updateVariation(idx, { quantity: Number(val) })} />
-                      <EditableField label="Estoque" editing type="number" value={String(v.stock)} onChange={(val) => updateVariation(idx, { stock: Number(val) })} />
-                      <EditableField label="Preço (R$)" editing type="number" value={String(v.price_brl)} onChange={(val) => updateVariation(idx, { price_brl: Number(val) })} />
+          <>
+            <p className="mt-5 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Opções de kit disponíveis</p>
+            <div className="mt-3 grid gap-4 md:grid-cols-2">
+              {((editing ? salesDraft?.variations : sales.variations) ?? []).map((v, idx) => (
+                <div key={idx} className="rounded-[1.2rem] border border-slate-900/10 bg-white p-4">
+                  {editing ? (
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="col-span-2">
+                          <label className="block text-xs font-semibold uppercase tracking-[0.16em] text-orange-600 mb-1">Quantidade no kit</label>
+                          <input
+                            type="number"
+                            min="1"
+                            value={v.quantity}
+                            onChange={(e) => updateVariation(idx, { quantity: Math.max(1, Number(e.target.value)) })}
+                            className="w-full rounded-[0.8rem] border border-orange-300 bg-white px-3 py-2 text-lg font-bold text-slate-950 outline-none focus:border-orange-500"
+                          />
+                          <p className="mt-1 text-xs text-slate-400">Nome, SKU e preço são gerados automaticamente ao alterar a quantidade.</p>
+                        </div>
+                        <EditableField label="SKU" editing value={v.sku} onChange={(val) => updateVariation(idx, { sku: val })} />
+                        <EditableField label="Nome no anúncio" editing value={v.name} onChange={(val) => updateVariation(idx, { name: val })} />
+                        <EditableField label="Estoque" editing type="number" value={String(v.stock)} onChange={(val) => updateVariation(idx, { stock: Number(val) })} />
+                        <EditableField label="Preço do kit (R$)" editing type="number" value={String(v.price_brl)} onChange={(val) => updateVariation(idx, { price_brl: Number(val) })} />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removeVariation(idx)}
+                        className="rounded-full border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50"
+                      >
+                        Remover opção
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => removeVariation(idx)}
-                      className="rounded-full border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50"
-                    >
-                      Remover
-                    </button>
-                  </div>
-                ) : (
-                  <>
-                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">{v.sku}</p>
-                    <h3 className="mt-1 text-base font-semibold text-slate-950">{v.name}</h3>
-                    <div className="mt-3 grid grid-cols-3 gap-2 text-sm text-slate-600">
-                      <div><span className="font-semibold">Qtd:</span> {v.quantity}</div>
-                      <div><span className="font-semibold">Estoque:</span> {v.stock}</div>
-                      <div><span className="font-semibold">Preço:</span> {currency(v.price_brl)}</div>
-                    </div>
-                    {v.description ? <p className="mt-2 text-xs text-slate-500">{v.description}</p> : null}
-                  </>
-                )}
-              </div>
-            ))}
-          </div>
+                  ) : (
+                    <>
+                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">{v.sku}</p>
+                      <h3 className="mt-1 text-base font-semibold text-slate-950">{v.name}</h3>
+                      <div className="mt-3 grid grid-cols-3 gap-2 text-sm text-slate-600">
+                        <div><span className="font-semibold">Qtd:</span> {v.quantity} un.</div>
+                        <div><span className="font-semibold">Estoque:</span> {v.stock}</div>
+                        <div><span className="font-semibold">Preço:</span> {currency(v.price_brl)}</div>
+                      </div>
+                      {v.description ? <p className="mt-2 text-xs text-slate-500">{v.description}</p> : null}
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div className="mt-4 rounded-[1.1rem] border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+              Com múltiplas opções, o comprador escolhe a quantidade no anúncio. A descrição do ML listará todas as opções disponíveis automaticamente.
+            </div>
+          </>
         )}
       </section>
 
@@ -648,6 +730,33 @@ export function SalesProductDetail({ project }: Props) {
         onReorder={(newOrder) => setSalesField("photo_order", newOrder)}
       />
 
+      {/* ── Conteúdo dos Anúncios ─────────────────────────────────────────── */}
+      <section className="panel p-5 md:p-6">
+        <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+          <div>
+            <p className="section-kicker">Conteúdo dos Anúncios</p>
+            <h2 className="mt-2 text-2xl font-semibold text-slate-950">Título, descrição e atributos por canal</h2>
+            <p className="mt-1 text-sm text-slate-500">Textos prontos para cadastrar no Mercado Livre, Shopee e catálogo próprio. A quantidade é inserida automaticamente na descrição.</p>
+          </div>
+          {copied ? <span className="pill">{copied}</span> : null}
+        </div>
+
+        <div className="mt-6 grid gap-5 xl:grid-cols-3">
+          {channels.map((channel, idx) =>
+            editing ? (
+              <EditableMarketplaceCard
+                key={channel.marketplace}
+                channel={channel}
+                onUpdate={(updates) => updateChannel(idx, updates)}
+              />
+            ) : (
+              <MarketplaceCard key={channel.marketplace} channel={channel} price={currency(salePrice)} onCopy={copyText} />
+            ),
+          )}
+        </div>
+      </section>
+
+      {/* ── Publicar ─────────────────────────────────────────────────────── */}
       <StorePublicationPanel
         canPublish={can(PERMISSIONS.storesPublish)}
         canManageStores={can(PERMISSIONS.storesManage)}
@@ -673,30 +782,6 @@ export function SalesProductDetail({ project }: Props) {
         saveStoreLoading={saveStoreLoading}
         storeSettingsMessage={storeSettingsMessage}
       />
-
-      <section className="panel p-5 md:p-6">
-        <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-          <div>
-            <p className="section-kicker">Marketplaces</p>
-            <h2 className="mt-2 text-2xl font-semibold text-slate-950">Conteúdo para cadastrar o produto</h2>
-          </div>
-          {copied ? <span className="pill">{copied}</span> : null}
-        </div>
-
-        <div className="mt-6 grid gap-5 xl:grid-cols-3">
-          {channels.map((channel, idx) =>
-            editing ? (
-              <EditableMarketplaceCard
-                key={channel.marketplace}
-                channel={channel}
-                onUpdate={(updates) => updateChannel(idx, updates)}
-              />
-            ) : (
-              <MarketplaceCard key={channel.marketplace} channel={channel} price={currency(salePrice)} onCopy={copyText} />
-            ),
-          )}
-        </div>
-      </section>
 
       <section className="panel p-5 md:p-6">
         <p className="section-kicker">Dicas comerciais</p>
