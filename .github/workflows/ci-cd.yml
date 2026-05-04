@@ -79,7 +79,7 @@ jobs:
   # ──────────────────────────────────────────────────────────
   # 3. Deploy — sincroniza catalogoservico → Northflank builda
   # Só roda em push direto na main (não em PRs)
-  # Secret necessário: DEPLOY_SSH_KEY (chave privada SSH com deploy key no catalogoservico)
+  # Usa GITHUB_TOKEN ou DEPLOY_TOKEN para push HTTPS (sem SSH key obrigatória)
   # ──────────────────────────────────────────────────────────
   deploy:
     name: Sync → catalogoservico (Northflank)
@@ -95,22 +95,28 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Configurar SSH deploy key
-        uses: webfactory/ssh-agent@v0.9.1
-        with:
-          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
-
-      - name: Adicionar github.com ao known_hosts
-        run: ssh-keyscan github.com >> ~/.ssh/known_hosts
-
       - name: Configurar identidade git
         run: |
           git config user.email "ci-deploy@github-actions"
           git config user.name "GitHub Actions CI"
 
-      - name: Push para catalogoservico/snapmaker3d-studio
+      - name: Push para catalogoservico/snapmaker3d-studio (HTTPS)
+        env:
+          DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
         run: |
-          git remote add deploy git@github.com:rodrigogrosa/catalogoservico.git
+          # Usa DEPLOY_TOKEN (PAT clássico com scope repo) se disponível,
+          # caso contrário tenta DEPLOY_SSH_KEY via SSH (legado).
+          if [ -n "$DEPLOY_TOKEN" ]; then
+            git remote add deploy "https://x-access-token:${DEPLOY_TOKEN}@github.com/rodrigogrosa/catalogoservico.git"
+          else
+            # Fallback SSH (requer secret DEPLOY_SSH_KEY configurado)
+            mkdir -p ~/.ssh
+            echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_deploy
+            chmod 600 ~/.ssh/id_deploy
+            ssh-keyscan github.com >> ~/.ssh/known_hosts
+            GIT_SSH_COMMAND="ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=no" \
+            git remote add deploy git@github.com:rodrigogrosa/catalogoservico.git
+          fi
           git push deploy HEAD:snapmaker3d-studio --force
 
       - name: Resumo do deploy
