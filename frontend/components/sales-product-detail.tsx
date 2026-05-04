@@ -127,9 +127,19 @@ export function SalesProductDetail({ project }: Props) {
     setSaving(true);
     setSaveMsg(null);
     try {
+      // Capture the current visible photo order so the ML publish uses the same order
+      // the user sees in the panel (WYSIWYG). Only set if not already explicitly ordered.
+      const draftToSave: SalesProfile = { ...salesDraft };
+      if ((!draftToSave.photo_order || draftToSave.photo_order.length === 0) && adPhotos.length > 0) {
+        draftToSave.photo_order = adPhotos.map((p) => p.href);
+      } else if (draftToSave.photo_order && draftToSave.photo_order.length > 0) {
+        // Remove hidden photos from photo_order so the saved order stays clean
+        const hiddenSet = new Set(draftToSave.hidden_photo_paths ?? []);
+        draftToSave.photo_order = draftToSave.photo_order.filter((href) => !hiddenSet.has(href));
+      }
       const updated = await updateProject(localProject.id, {
         name: nameDraft,
-        sales_profile: salesDraft as Record<string, unknown>,
+        sales_profile: draftToSave as Record<string, unknown>,
       });
       setLocalProject(updated);
       setEditing(false);

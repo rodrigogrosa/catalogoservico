@@ -708,7 +708,14 @@ class StoreService:
         previews = list(project.get("previews", []) or [])
         # Use all previews — marketplace_preview filtering was too restrictive and excluded real photos
         preview_url = project.get("preview_url")
-        raw_paths: list[str | None] = [preview_url] + [item.get("path") for item in previews]
+
+        # Build raw_paths, avoiding duplicate of preview_url (it may already be in previews list).
+        preview_paths_in_previews = {item.get("path") for item in previews if item.get("path")}
+        raw_paths: list[str | None] = [preview_url]
+        for item in previews:
+            item_path = item.get("path")
+            if item_path and item_path != preview_url:
+                raw_paths.append(item_path)
 
         # When previews array is empty (common — DB only stores preview_url), scan the
         # preview directory on filesystem to find all sibling images automatically.
@@ -725,6 +732,19 @@ class StoreService:
 
         candidate_bases = self.image_base_url_candidates(image_base_url, store)
         primary_base = candidate_bases[0] if candidate_bases else self.settings.public_backend_origin.rstrip("/")
+
+        # Build a normalizer: converts /storage/... relative paths to full URLs using primary_base.
+        # Needed so that photo_order (stored as relative paths by the browser frontend) can be
+        # compared against deduped (which contains full URLs).
+        def _to_full_url(url: str) -> str:
+            if url.startswith("/"):
+                return f"{primary_base}{url}"
+            return url
+
+        # Build a hidden-set that covers both relative-path and full-URL representations
+        # so the check works regardless of how the frontend stored the path.
+        hidden_full = {_to_full_url(p) for p in hidden_set} | hidden_set
+
         public_paths: list[str] = []
         for raw_path in raw_paths:
             if not raw_path:
@@ -734,29 +754,36 @@ class StoreService:
                 continue
             if path.startswith("http"):
                 full_url = path
-                if full_url in hidden_set:
+                if full_url in hidden_full:
                     continue
                 if self.is_public_http_image(full_url):
                     public_paths.append(full_url)
                 continue
-            full_url = f"{primary_base}{path}"
-            if full_url in hidden_set or path in hidden_set:
+            full_url = _to_full_url(path)
+            if full_url in hidden_full or path in hidden_full:
                 continue
             public_paths.append(full_url)
         # Append user-added extra photos
         for ep in extra_photos:
             ep_path = str(ep.get("path") if isinstance(ep, dict) else getattr(ep, "path", ""))
-            if not ep_path or ep_path in hidden_set:
+            if not ep_path:
+                continue
+            ep_full = _to_full_url(ep_path)
+            if ep_full in hidden_full or ep_path in hidden_full:
                 continue
             if not ep_path.lower().split("?")[0].endswith((".png", ".jpg", ".jpeg", ".webp")):
                 ep_path = ep_path  # include anyway — ML will validate
-            public_paths.append(ep_path)
+            public_paths.append(ep_full if ep_path.startswith("/") else ep_path)
         deduped = list(dict.fromkeys(public_paths))
-        # Apply explicit photo_order from sales_profile (user-defined ordering)
+        # Apply explicit photo_order from sales_profile (user-defined ordering).
+        # photo_order may contain relative /storage/... paths (stored by the browser frontend)
+        # or full URLs — normalise to full URLs before comparing against deduped.
         if photo_order:
-            order_index = {url: i for i, url in enumerate(photo_order)}
-            in_order = [u for u in photo_order if u in set(deduped)]
-            rest = [u for u in deduped if u not in order_index]
+            full_order = [_to_full_url(u) for u in photo_order]
+            deduped_set = set(deduped)
+            in_order = [u for u in full_order if u in deduped_set]
+            order_full_set = set(full_order)
+            rest = [u for u in deduped if u not in order_full_set]
             deduped = in_order + rest
         return deduped
 

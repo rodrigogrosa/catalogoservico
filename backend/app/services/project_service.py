@@ -795,13 +795,23 @@ class ProjectService:
 
         # Auto-populate previews from filesystem when the DB field is empty.
         # This happens for older projects or when the pipeline ran without storing previews.
+        # IMPORTANT: do NOT call collect_previews_fast here — it internally calls
+        # curate_preview_assets(previews_dir=...) which triggers prune_preview_directory
+        # and would DELETE image files on every GET request.
+        # Instead, use collect_existing_previews + curate without pruning.
         if not manifest.get("previews"):
             slug = manifest.get("slug", "")
             version_name = manifest.get("id", project_id)
             previews_dir = self.settings.storage_root / slug / version_name / "previews"
             if previews_dir.is_dir():
                 try:
-                    manifest["previews"] = self.collect_previews_fast(previews_dir)
+                    preview_assets = self.preview_service.collect_existing_previews(
+                        previews_dir, self.settings.storage_root
+                    )
+                    if preview_assets:
+                        manifest["previews"] = self.curate_preview_assets(
+                            preview_assets, previews_dir=None  # None = no pruning
+                        )
                 except Exception:  # noqa: BLE001
                     pass  # Non-critical: proceed with empty previews rather than failing
 
