@@ -603,6 +603,13 @@ class StoreService:
             }
             if ml_variations:
                 payload["variations"] = ml_variations
+                # ML rule: item.price must equal the highest variation price.
+                # If price_override_brl was set below max variation price, update it.
+                max_var_price = max(float(v.get("price", 0)) for v in ml_variations)
+                if max_var_price > 0:
+                    payload["price"] = round(max_var_price, 2)
+                # ML rule: available_quantity at item level = sum of all variation quantities
+                payload["available_quantity"] = sum(int(v.get("available_quantity", 0)) for v in ml_variations)
                 # ML rule: any attribute ID used in variation.attribute_combinations
                 # MUST NOT also appear in item.attributes — causes error item.attributes.invalid.
                 variation_combo_ids: set[str] = set()

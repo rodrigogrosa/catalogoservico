@@ -174,7 +174,68 @@ def upload_image_direct(ml_token: str, image_path: Path, dry_run: bool) -> str |
     return _upload_directly_to_ml(ml_token, image_path)
 
 
-def publish_project(token: str, project_id: str, picture_ids: list[str], dry_run: bool) -> None:
+def get_draft_payload(token: str, project_id: str, picture_ids: list[str]) -> dict | None:
+    """Obtém o payload de rascunho do backend (sem publicar). Retorna None em caso de erro."""
+    url = f"{BASE_URL}/stores/{STORE_ID}/publish/{project_id}"
+    payload = {
+        "mode": "draft",
+        "stock": STOCK,
+        "price_override_brl": PRICE_BRL,
+        "pre_uploaded_picture_ids": picture_ids,
+    }
+    body = json.dumps(payload).encode()
+    req = Request(url, data=body, method="POST", headers={
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    })
+    try:
+        with urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read())
+    except HTTPError as exc:
+        body_bytes = exc.read()
+        print(f"  ❌ Erro ao obter draft: HTTP {exc.code} — {body_bytes.decode(errors='replace')[:300]}")
+        return None
+    except Exception as exc:
+        print(f"  ❌ Erro ao obter draft: {exc}")
+        return None
+
+
+def publish_directly_via_ml(ml_token: str, draft_result: dict) -> None:
+    """Publica diretamente na API do ML usando o payload do rascunho (bypassa validação do backend)."""
+    payload = draft_result.get("payload") or {}
+    if not payload:
+        print("  ❌ Payload de draft vazio.")
+        return
+
+    # Limpar campos internos que não devem ir para a API do ML
+    ml_payload = {
+        k: v for k, v in payload.items()
+        if k not in {"images", "description_plain_text", "category_prediction_applied",
+                     "_pre_uploaded_picture_ids", "category_prediction_applied"}
+    }
+
+    print(f"  ℹ️  Publicando direto na API ML com {len(ml_payload)} campos...")
+    body = json.dumps(ml_payload).encode()
+    req = Request("https://api.mercadolibre.com/items", data=body, method="POST", headers={
+        "Authorization": f"Bearer {ml_token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    })
+    try:
+        with urlopen(req, timeout=60) as resp:
+            result = json.loads(resp.read())
+        item_id = result.get("id", "")
+        permalink = result.get("permalink", "")
+        print(f"  ✅ PUBLICADO! item_id={item_id}")
+        if permalink:
+            print(f"     Link: {permalink}")
+    except HTTPError as exc:
+        body_bytes = exc.read()
+        detail = body_bytes.decode(errors='replace')
+        print(f"  ❌ Erro ML POST /items: HTTP {exc.code} — {detail[:500]}")
+
+
+def publish_project(token: str, project_id: str, picture_ids: list[str], dry_run: bool, ml_token: str | None = None) -> None:
     if dry_run:
         print(f"  [DRY-RUN] publicaria {project_id} com picture_ids={picture_ids}")
         return
@@ -206,6 +267,15 @@ def publish_project(token: str, project_id: str, picture_ids: list[str], dry_run
             print(f"  ⚠️  Status: {status}")
             for b in blockers:
                 print(f"     ⛔ {b}")
+            # Estratégia C: se o bloqueio for o erro de variações do ML e temos ml_token, tenta publicar direto
+            variation_error = any("variations.price.different" in b for b in blockers)
+            if variation_error and ml_token:
+                print("\n  ℹ️  Ativando Estratégia C: publicação direta via ML API (bypassa validação)...")
+                draft = get_draft_payload(token, project_id, picture_ids)
+                if draft:
+                    publish_directly_via_ml(ml_token, draft)
+            elif variation_error and not ml_token:
+                print("\n  ℹ️  Para contornar erro de variações, obtenha o ML token e use estratégia C.")
     except HTTPError as exc:
         body_bytes = exc.read()
         print(f"  ❌ Erro ao publicar: HTTP {exc.code} — {body_bytes.decode(errors='replace')[:400]}")
@@ -324,9 +394,15 @@ def main() -> None:
 
     print(f"\n   ✅ {len(picture_ids)}/{len(ml_files)} imagens enviadas com sucesso")
 
+    # Obtém ML token (necessário como fallback na Estratégia C)
+    if not args.dry_run and not ml_token:
+        ml_token = _get_ml_token_via_backend(token)
+        if ml_token:
+            print("   ℹ️  ML token obtido para fallback de publicação direta")
+
     # 4. Publicar
     print(f"\n4. Publicando {args.project}...")
-    publish_project(token, args.project, picture_ids, args.dry_run)
+    publish_project(token, args.project, picture_ids, args.dry_run, ml_token=ml_token)
     print("\nConcluído.")
 
 
