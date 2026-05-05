@@ -840,6 +840,28 @@ class StoreService:
                 local_paths.append(str(best))
         return list(dict.fromkeys(local_paths))
 
+    def _resolve_local_paths_for_urls(self, source_urls: list[str]) -> list[str]:
+        """Convert ordered source URLs (relative /storage/... or absolute https://...) to local filesystem paths.
+
+        Preserves the order of source_urls (which already reflects photo_order and hidden_photo_paths).
+        Only includes paths that exist on disk.
+        """
+        storage_root = self.settings.storage_root
+        local_paths: list[str] = []
+        for url in source_urls:
+            # Normalise to relative /storage/... path
+            if "/storage/" in url:
+                relative = "/storage/" + url.split("/storage/", 1)[1]
+            else:
+                continue
+            fs_path = storage_root / relative[len("/storage/"):]
+            if not (fs_path.exists() and fs_path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}):
+                continue
+            ml_ready = fs_path.parent / f"ml_ready_{fs_path.stem}.jpg"
+            best = ml_ready if ml_ready.exists() else fs_path
+            local_paths.append(str(best))
+        return list(dict.fromkeys(local_paths))
+
     def image_base_url_candidates(self, request_image_base_url: str | None, store: dict[str, Any] | None) -> list[str]:
         candidates: list[str] = []
         if request_image_base_url:
@@ -885,17 +907,19 @@ class StoreService:
         if pre_uploaded_ids:
             product_payload["pictures"] = [{"id": pid} for pid in pre_uploaded_ids]
         else:
-            # Always prefer local file upload to ML — source URLs from our backend aren't
-            # publicly downloadable by ML's servers. Only fall back to source URLs if no
-            # local files exist.
-            local_images = self.resolve_local_product_images(project)
+            # `product_payload["pictures"]` already contains [{"source": url}, ...] built from
+            # resolve_product_images — which respects hidden_photo_paths and photo_order.
+            # Resolve those source URLs to local filesystem paths (same order, same filter).
+            source_urls_ordered = [
+                p["source"] for p in (product_payload.get("pictures") or []) if p.get("source")
+            ]
+            local_images = self._resolve_local_paths_for_urls(source_urls_ordered) if source_urls_ordered else []
             if local_images:
                 product_payload["pictures"] = self.upload_local_mercado_livre_pictures(access_token, local_images)
             elif not product_payload.get("pictures"):
                 pass  # no pictures available at all
             else:
-                # Pictures exist only as source URLs (not yet uploaded to ML).
-                # Download each URL to a temp file and upload so ML gets proper picture IDs.
+                # Fall back: download the source URLs directly to temp files and upload
                 source_urls = [
                     p["source"]
                     for p in product_payload["pictures"]

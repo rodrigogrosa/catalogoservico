@@ -182,7 +182,7 @@ def test_publish_uploads_local_files_instead_of_source_urls(monkeypatch: pytest.
         "sale_terms": [], "attributes": [], "description_plain_text": "",
     }
 
-    monkeypatch.setattr(service, "resolve_local_product_images", lambda p: [str(img)])
+    monkeypatch.setattr(service, "_resolve_local_paths_for_urls", lambda urls: [str(img)])
     upload_called_with: list[list[str]] = []
 
     def fake_upload(tok, paths):
@@ -252,7 +252,7 @@ def test_publish_variations_receive_picture_ids(monkeypatch: pytest.MonkeyPatch,
     product_payload = {
         "title": "T", "category_id": "MLB439316", "price": 29.90, "available_quantity": 50,
         "currency_id": "BRL", "buying_mode": "buy_it_now", "condition": "new",
-        "listing_type_id": "gold_special", "pictures": [],
+        "listing_type_id": "gold_special", "pictures": [{"source": "https://api.euachei3d.com.br/storage/projects/p1/photo.jpg"}],
         "sale_terms": [{"id": "WARRANTY_TYPE", "value_name": "Garantia do vendedor"}],
         "attributes": [], "description_plain_text": "Desc",
         "variations": [
@@ -261,7 +261,7 @@ def test_publish_variations_receive_picture_ids(monkeypatch: pytest.MonkeyPatch,
         ],
     }
 
-    monkeypatch.setattr(service, "resolve_local_product_images", lambda p: [str(tmp_path / "photo.jpg")])
+    monkeypatch.setattr(service, "_resolve_local_paths_for_urls", lambda urls: [str(tmp_path / "photo.jpg")])
     monkeypatch.setattr(service, "upload_local_mercado_livre_pictures", lambda tok, paths: [{"id": "ML_P1"}, {"id": "ML_P2"}])
     monkeypatch.setattr(service, "mercado_livre_validate_item", lambda tok, p, **kw: {})
 
