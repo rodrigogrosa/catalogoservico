@@ -1148,7 +1148,7 @@ export async function startMercadoLivreOAuth(storeId: string): Promise<StoreOAut
 export async function buildPublicationDraft(
   storeId: string,
   projectId: string,
-  options?: { mode?: "draft" | "validate" | "publish"; stock?: number },
+  options?: { mode?: "draft" | "validate" | "publish"; stock?: number; price_override_brl?: number },
 ): Promise<ProductPublishDraft> {
   const response = await apiFetchResilient(`/stores/${storeId}/publish/${projectId}`, {
     method: "POST",
