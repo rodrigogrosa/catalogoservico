@@ -393,7 +393,7 @@ export function SalesProductDetail({ project }: Props) {
 
       <section className="panel overflow-hidden p-0">
         <div className="grid gap-0 lg:grid-cols-[0.95fr_1.05fr]">
-          <div className="min-h-[340px] bg-slate-100">
+          <div className="relative min-h-[340px] bg-slate-100">
             {hasImagePreview ? (
               <img src={imageUrl} alt={`Imagem principal de ${localProject.name}`} className="h-full min-h-[340px] w-full object-cover" />
             ) : (
@@ -401,6 +401,75 @@ export function SalesProductDetail({ project }: Props) {
                 Sem imagem principal disponível
               </div>
             )}
+            {editing ? (
+              <div className="absolute inset-0 flex flex-col items-center justify-end gap-2 bg-black/30 p-4">
+                <span className="rounded-full bg-orange-600 px-3 py-1 text-xs font-bold text-white shadow">Foto em destaque</span>
+                <div className="flex gap-2">
+                  <label className="cursor-pointer rounded-full bg-white px-4 py-2 text-xs font-bold text-slate-900 shadow hover:bg-orange-50">
+                    Alterar foto
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      className="hidden"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        try {
+                          const updated = await uploadPreviewPhoto(localProject.id, file);
+                          setLocalProject(updated);
+                          setSalesDraft(JSON.parse(JSON.stringify(updated.sales_profile)) as SalesProfile);
+                          // Move the new photo to position 0 so it becomes the featured image
+                          const newPreviews = updated.previews ?? [];
+                          if (newPreviews.length > 0) {
+                            const newPath = newPreviews[newPreviews.length - 1]?.path;
+                            if (newPath) {
+                              const currentOrder = newPreviews.map((p) => p.path).filter(Boolean) as string[];
+                              const reordered = [newPath, ...currentOrder.filter((p) => p !== newPath)];
+                              setSalesDraft((prev) => prev ? { ...prev, photo_order: reordered } : prev);
+                            }
+                          }
+                        } catch { /* ignore */ }
+                        e.target.value = "";
+                      }}
+                    />
+                  </label>
+                  {adPhotos.length > 1 ? (
+                    <select
+                      className="rounded-full bg-white px-3 py-2 text-xs font-bold text-slate-900 shadow hover:bg-orange-50 outline-none"
+                      value=""
+                      onChange={(e) => {
+                        const chosen = e.target.value;
+                        if (!chosen) return;
+                        const currentOrder = adPhotos.map((p) => p.href);
+                        const reordered = [chosen, ...currentOrder.filter((p) => p !== chosen)];
+                        setSalesField("photo_order", reordered);
+                      }}
+                    >
+                      <option value="">Escolher outra foto</option>
+                      {adPhotos.slice(1).map((p) => (
+                        <option key={p.href} value={p.href}>{p.label}</option>
+                      ))}
+                    </select>
+                  ) : null}
+                  {imageUrl && imageUrl.startsWith("/storage/") ? (
+                    <button
+                      type="button"
+                      className="rounded-full bg-red-600 px-4 py-2 text-xs font-bold text-white shadow hover:bg-red-700"
+                      onClick={async () => {
+                        if (!window.confirm("Excluir esta foto em destaque permanentemente?")) return;
+                        try {
+                          const updated = await deletePreviewPhoto(localProject.id, imageUrl);
+                          setLocalProject(updated);
+                          setSalesDraft(JSON.parse(JSON.stringify(updated.sales_profile)) as SalesProfile);
+                        } catch { /* ignore */ }
+                      }}
+                    >
+                      Excluir foto
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
           </div>
 
           <div className="p-6 md:p-8">
