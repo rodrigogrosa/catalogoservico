@@ -835,31 +835,7 @@ export function SalesProductDetail({ project }: Props) {
         }}
       />
 
-      {/* ── Conteúdo dos Anúncios ─────────────────────────────────────────── */}
-      <section className="panel p-5 md:p-6">
-        <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-          <div>
-            <p className="section-kicker">Conteúdo dos Anúncios</p>
-            <h2 className="mt-2 text-2xl font-semibold text-slate-950">Título, descrição e atributos por canal</h2>
-            <p className="mt-1 text-sm text-slate-500">Textos prontos para cadastrar no Mercado Livre, Shopee e catálogo próprio. A quantidade é inserida automaticamente na descrição.</p>
-          </div>
-          {copied ? <span className="pill">{copied}</span> : null}
-        </div>
-
-        <div className="mt-6 grid gap-5 xl:grid-cols-3">
-          {channels.map((channel, idx) =>
-            editing ? (
-              <EditableMarketplaceCard
-                key={channel.marketplace}
-                channel={channel}
-                onUpdate={(updates) => updateChannel(idx, updates)}
-              />
-            ) : (
-              <MarketplaceCard key={channel.marketplace} channel={channel} price={currency(salePrice)} onCopy={copyText} />
-            ),
-          )}
-        </div>
-      </section>
+      {/* Conteúdo dos Anúncios — oculto */}
 
       {/* ── Publicar ─────────────────────────────────────────────────────── */}
       <StorePublicationPanel
@@ -888,28 +864,7 @@ export function SalesProductDetail({ project }: Props) {
         storeSettingsMessage={storeSettingsMessage}
       />
 
-      <section className="panel p-5 md:p-6">
-        <p className="section-kicker">Dicas comerciais</p>
-        <h2 className="mt-2 text-2xl font-semibold text-slate-950">Cuidados antes de publicar</h2>
-        <ul className="mt-5 grid gap-3 md:grid-cols-2">
-          {(editing ? (salesDraft?.sales_tips ?? []) : sales.sales_tips).map((tip, idx) =>
-            editing ? (
-              <li key={idx}>
-                <textarea
-                  value={tip}
-                  onChange={(e) => updateSalesTip(idx, e.target.value)}
-                  rows={3}
-                  className="w-full rounded-[1.2rem] border border-blue-300 bg-white p-4 text-sm leading-6 text-slate-700 outline-none focus:border-blue-500"
-                />
-              </li>
-            ) : (
-              <li key={tip} className="rounded-[1.2rem] border border-slate-900/10 bg-white p-4 text-sm leading-6 text-slate-700">
-                {tip}
-              </li>
-            ),
-          )}
-        </ul>
-      </section>
+      {/* Dicas comerciais — oculto */}
 
       <section className="grid gap-5 lg:grid-cols-2">
         <ArtifactPanel title="Arquivos exportados" items={project.artifacts} />
