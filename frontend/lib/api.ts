@@ -941,15 +941,63 @@ export async function updateProject(id: string, payload: UpdateProjectPayload): 
 }
 
 export async function uploadPreviewPhoto(projectId: string, file: File): Promise<ProjectDetail> {
-  const form = new FormData();
-  form.append("file", file);
-  const response = await apiFetchResilient(`/projects/${projectId}/previews/upload`, {
-    method: "POST",
-    headers: authHeaders(),
-    body: form,
+  return uploadPreviewPhotos(projectId, [file]);
+}
+
+/**
+ * Upload one or more preview photos in a single request.
+ * onProgress(0–100) tracks the network transfer of the whole batch.
+ */
+export function uploadPreviewPhotos(
+  projectId: string,
+  files: File[],
+  onProgress?: (pct: number) => void,
+): Promise<ProjectDetail> {
+  return new Promise((resolve, reject) => {
+    const form = new FormData();
+    files.forEach((f) => form.append("files", f));
+
+    const url = `${apiBase()}/projects/${projectId}/previews/upload`;
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", url);
+
+    const headers = authHeaders();
+    for (const [key, value] of Object.entries(headers)) {
+      xhr.setRequestHeader(key, value);
+    }
+
+    if (onProgress) {
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          onProgress(Math.min(99, Math.round((e.loaded / e.total) * 100)));
+        }
+      };
+    }
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        onProgress?.(100);
+        try {
+          resolve(JSON.parse(xhr.responseText) as ProjectDetail);
+        } catch {
+          reject(new Error("Resposta inválida do servidor."));
+        }
+      } else {
+        try {
+          const body = JSON.parse(xhr.responseText) as { detail?: string };
+          reject(new Error(body.detail ?? `Erro HTTP ${xhr.status}`));
+        } catch {
+          reject(new Error(`Falha ao enviar foto (HTTP ${xhr.status})`));
+        }
+      }
+    };
+
+    xhr.onerror = () => reject(new Error("Erro de rede durante o upload da foto."));
+    xhr.ontimeout = () => reject(new Error("Tempo esgotado durante o upload da foto."));
+    xhr.timeout = 5 * 60 * 1000; // 5 minutes
+
+    xhr.send(form);
   });
-  if (!response.ok) throw await parseApiError(response, "Falha ao enviar foto");
-  return response.json();
 }
 
 export async function deletePreviewPhoto(projectId: string, photoPath: string): Promise<ProjectDetail> {

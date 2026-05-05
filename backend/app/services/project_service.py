@@ -856,27 +856,68 @@ class ProjectService:
 
         return ProjectDetailResponse(**manifest)
 
+    def _save_preview_file(self, previews_dir: Path, filename: str, content: bytes) -> Path:
+        """Sanitise filename, avoid overwrite, write bytes. Returns the saved path."""
+        previews_dir.mkdir(parents=True, exist_ok=True)
+        safe_stem = "".join(c if c.isalnum() or c in "-_." else "_" for c in filename.rsplit(".", 1)[0])[:80]
+        ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "jpg"
+        if ext not in ("jpg", "jpeg", "png", "webp"):
+            ext = "jpg"
+        dest = previews_dir / f"{safe_stem}.{ext}"
+        counter = 1
+        while dest.exists():
+            dest = previews_dir / f"{safe_stem}_{counter}.{ext}"
+            counter += 1
+        dest.write_bytes(content)
+        return dest
+
+    def _rescan_and_update_previews(self, manifest: dict) -> None:
+        """Re-scan the previews directory and persist the updated list to manifest.
+        Called after any photo add/delete so get_project always returns the fresh list."""
+        slug = manifest.get("slug", "")
+        version_name = manifest.get("id", "")
+        previews_dir = self.settings.storage_root / slug / version_name / "previews"
+        if not previews_dir.is_dir():
+            return
+        try:
+            preview_assets = self.preview_service.collect_existing_previews(
+                previews_dir, self.settings.storage_root
+            )
+            manifest["previews"] = self.curate_preview_assets(preview_assets, previews_dir=None)
+            # Ensure preview_url points at a file that still exists
+            preview_url = manifest.get("preview_url")
+            existing_paths = {p.get("path") for p in manifest["previews"]}
+            if not preview_url or preview_url not in existing_paths:
+                manifest["preview_url"] = next(
+                    (p.get("path") for p in manifest["previews"] if p.get("path")), preview_url
+                )
+            self.storage.save_manifest(manifest)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("rescan_previews_failed", extra={"project_id": manifest.get("id"), "error": str(exc)})
+
     def add_preview_photo(self, project_id: str, filename: str, content: bytes) -> ProjectDetailResponse:
         """Save an uploaded image file into the project's previews folder and return the refreshed project."""
+        return self.add_preview_photos(project_id, [(filename, content)])
+
+    def add_preview_photos(self, project_id: str, files: list[tuple[str, bytes]]) -> ProjectDetailResponse:
+        """Save multiple uploaded image files and return the refreshed project.
+
+        ``files`` is a list of (filename, content) tuples.
+        All files are saved to disk first, then the manifest is updated atomically
+        in a single save so all new photos appear together.
+        """
         manifest = self.storage.load_manifest(project_id)
         if manifest is None:
             raise ValueError("Projeto nao encontrado.")
         slug = manifest.get("slug", "")
         version_name = manifest.get("id", project_id)
         previews_dir = self.settings.storage_root / slug / version_name / "previews"
-        previews_dir.mkdir(parents=True, exist_ok=True)
-        # Sanitise filename: keep stem, force .webp extension for consistency
-        safe_stem = "".join(c if c.isalnum() or c in "-_." else "_" for c in filename.rsplit(".", 1)[0])[:80]
-        ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "jpg"
-        if ext not in ("jpg", "jpeg", "png", "webp"):
-            ext = "jpg"
-        dest = previews_dir / f"{safe_stem}.{ext}"
-        # Avoid overwrite — append suffix if needed
-        counter = 1
-        while dest.exists():
-            dest = previews_dir / f"{safe_stem}_{counter}.{ext}"
-            counter += 1
-        dest.write_bytes(content)
+        for filename, content in files:
+            if len(content) > 20 * 1024 * 1024:
+                logger.warning("preview_upload_file_too_large", extra={"filename": filename, "project_id": project_id})
+                continue
+            self._save_preview_file(previews_dir, filename, content)
+        self._rescan_and_update_previews(manifest)
         refreshed = self.get_project(project_id)
         return refreshed if refreshed is not None else ProjectDetailResponse(**manifest)
 
@@ -896,24 +937,26 @@ class ProjectService:
             raise ValueError("Caminho fora da raiz de armazenamento.")
         if target.exists() and target.is_file():
             target.unlink()
-        # Also remove from manifest previews list and photo_order / hidden_photo_paths
-        manifest_changed = False
-        if manifest.get("previews"):
-            manifest["previews"] = [p for p in manifest["previews"] if p.get("path") != relative_path]
-            manifest_changed = True
-        sp = manifest.get("sales_profile") or {}
-        if sp.get("photo_order"):
-            sp["photo_order"] = [p for p in sp["photo_order"] if p != relative_path]
-            manifest_changed = True
-        if sp.get("hidden_photo_paths"):
-            sp["hidden_photo_paths"] = [p for p in sp["hidden_photo_paths"] if p != relative_path]
-            manifest_changed = True
-        if manifest.get("preview_url") == relative_path:
-            manifest["preview_url"] = None
-            manifest_changed = True
-        if manifest_changed:
-            manifest["sales_profile"] = sp
-            self.storage.save_manifest(manifest)
+        # Rescan disk to rebuild previews list and persist manifest atomically
+        self._rescan_and_update_previews(manifest)
+        # Also strip the deleted path from photo_order and hidden_photo_paths
+        manifest2 = self.storage.load_manifest(project_id) or manifest
+        sp = manifest2.get("sales_profile") or {}
+        changed = False
+        for field in ("photo_order", "hidden_photo_paths"):
+            if sp.get(field):
+                before = len(sp[field])
+                sp[field] = [p for p in sp[field] if p != relative_path]
+                changed = changed or len(sp[field]) != before
+        if manifest2.get("preview_url") == relative_path:
+            manifest2["preview_url"] = next(
+                (p.get("path") for p in (manifest2.get("previews") or []) if p.get("path") and p.get("path") != relative_path),
+                None,
+            )
+            changed = True
+        if changed:
+            manifest2["sales_profile"] = sp
+            self.storage.save_manifest(manifest2)
         refreshed = self.get_project(project_id)
         return refreshed if refreshed is not None else ProjectDetailResponse(**manifest)
 

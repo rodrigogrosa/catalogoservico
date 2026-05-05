@@ -11,6 +11,7 @@ import {
   fileUrl,
   updateProject,
   uploadPreviewPhoto,
+  uploadPreviewPhotos,
   updateStore,
   type ArtifactReference,
   type MarketplaceAttribute,
@@ -1195,6 +1196,7 @@ function PhotoDownloadPanel({
   const [newPhotoUrl, setNewPhotoUrl] = useState("");
   const [newPhotoLabel, setNewPhotoLabel] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
 
 
@@ -1214,20 +1216,28 @@ function PhotoDownloadPanel({
     onReorder?.(newOrder);
   }
 
-  async function handleFileUpload(file: File) {
+  async function handleFilesUpload(fileList: File[]) {
+    if (fileList.length === 0) return;
     setUploading(true);
-    setStatus("Enviando foto...");
+    setUploadProgress(0);
+    setStatus(fileList.length === 1 ? "Enviando foto..." : `Enviando ${fileList.length} fotos...`);
     try {
-      const updated = await uploadPreviewPhoto(projectId, file);
+      const updated = await uploadPreviewPhotos(projectId, fileList, (pct) => setUploadProgress(pct));
       onUploadPhoto?.(updated);
-      setStatus("Foto adicionada!");
+      setStatus(fileList.length === 1 ? "Foto adicionada!" : `${fileList.length} fotos adicionadas!`);
       window.setTimeout(() => setStatus(null), 2000);
-    } catch {
-      setStatus("Erro ao enviar foto.");
-      window.setTimeout(() => setStatus(null), 3000);
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : "Erro ao enviar foto.");
+      window.setTimeout(() => setStatus(null), 4000);
     } finally {
       setUploading(false);
+      setUploadProgress(null);
     }
+  }
+
+  // legacy single-file compat (used by "Alterar foto" in the card overlay)
+  async function handleFileUpload(file: File) {
+    return handleFilesUpload([file]);
   }
 
   async function handleDeletePhoto(photoHref: string) {
@@ -1297,18 +1307,30 @@ function PhotoDownloadPanel({
           </p>
         </div>
         <div className="flex items-center gap-3">
-          {status ? <span className="pill">{status}</span> : <span className="pill">{photos.length} imagens</span>}
+          {uploading && uploadProgress !== null ? (
+            <div className="flex items-center gap-2">
+              <div className="h-2 w-32 overflow-hidden rounded-full bg-slate-200">
+                <div className="h-full rounded-full bg-blue-600 transition-all duration-200" style={{ width: `${uploadProgress}%` }} />
+              </div>
+              <span className="text-xs text-slate-600">{uploadProgress}%</span>
+            </div>
+          ) : status ? (
+            <span className="pill">{status}</span>
+          ) : (
+            <span className="pill">{photos.length} imagens</span>
+          )}
           {editing ? (
             <label className={`cursor-pointer rounded-full bg-blue-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-800 ${uploading ? "opacity-50 pointer-events-none" : ""}`}>
-              {uploading ? "Enviando..." : "+ Enviar foto"}
+              {uploading ? "Enviando..." : "+ Enviar fotos"}
               <input
                 type="file"
                 accept="image/jpeg,image/png,image/webp"
+                multiple
                 className="hidden"
                 disabled={uploading}
                 onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) handleFileUpload(file);
+                  const files = Array.from(e.target.files ?? []);
+                  if (files.length > 0) handleFilesUpload(files);
                   e.target.value = "";
                 }}
               />

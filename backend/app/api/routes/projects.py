@@ -91,17 +91,30 @@ async def update_project(
 @router.post("/{project_id}/previews/upload", response_model=ProjectDetailResponse)
 async def upload_preview_photo(
     project_id: str,
-    file: UploadFile = File(...),
+    files: list[UploadFile] = File(...),
     service: ProjectService = Depends(get_project_service),
     current_user: AuthUser = Depends(require_permission("projects.process")),
 ) -> ProjectDetailResponse:
-    """Upload a new photo file directly into the project's previews folder."""
-    logger.info("preview_upload_requested", extra={"username": current_user.username, "project_id": project_id})
-    content = await file.read()
-    if len(content) > 20 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="Arquivo muito grande. Máximo 20 MB.")
+    """Upload one or more photo files directly into the project's previews folder.
+
+    Accepts multiple files in a single request (field name ``files``).  All files
+    are saved to disk first, the manifest is updated atomically, and the refreshed
+    project is returned.  Legacy single-file callers still work: just send one file.
+    """
+    logger.info(
+        "preview_upload_requested",
+        extra={"username": current_user.username, "project_id": project_id, "file_count": len(files)},
+    )
+    file_tuples: list[tuple[str, bytes]] = []
+    for upload in files:
+        content = await upload.read()
+        if len(content) > 20 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail=f"Arquivo '{upload.filename}' muito grande. Máximo 20 MB por foto.")
+        file_tuples.append((upload.filename or "photo.jpg", content))
+    if not file_tuples:
+        raise HTTPException(status_code=400, detail="Nenhum arquivo recebido.")
     try:
-        return service.add_preview_photo(project_id, file.filename or "photo.jpg", content)
+        return await asyncio.to_thread(service.add_preview_photos, project_id, file_tuples)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
