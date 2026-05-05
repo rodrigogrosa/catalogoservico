@@ -32,6 +32,13 @@ async def lifespan(application: FastAPI):  # noqa: ANN001
     except Exception as exc:  # noqa: BLE001
         logger.warning("reviewer_agent_startup_failed", extra={"error": str(exc)})
 
+    # Async upload worker — reads from Redis Streams, processes queued upload jobs.
+    try:
+        from app.services import upload_worker
+        upload_worker.start()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("upload_worker_startup_failed", extra={"error": str(exc)})
+
     # Backfill sales_profile for any project that is missing it (idempotent, runs in background).
     try:
         import threading

@@ -86,6 +86,43 @@ class ProjectService:
 
     # ── Project creation ─────────────────────────────────────────────────────
 
+    async def save_upload_files(
+        self,
+        files: list[UploadFile],
+        requested_name: str | None = None,
+    ) -> tuple[list[Path], dict]:
+        """Save uploaded files to disk and create the project layout.
+
+        Returns (saved_files, layout).  Does NOT run any parsing or processing —
+        that is left to the async worker (or the synchronous fallback).
+        Raises ValueError on validation errors (no files, too many files, etc.)
+        """
+        uploads = [f for f in files if f is not None]
+        if not uploads:
+            raise ValueError("Nenhum arquivo enviado.")
+        if len(uploads) > self.settings.max_project_files:
+            raise ValueError(f"O projeto excede o limite de {self.settings.max_project_files} arquivos por upload.")
+        project_name = requested_name or self.make_friendly_project_name(
+            uploads[0].filename if uploads else "projeto-3d",
+            allow_vision=False,
+        )
+        layout = self.storage.create_project_layout(project_name)
+        saved_files = await asyncio.to_thread(
+            self.storage.save_uploads_sync,
+            uploads,
+            layout["folders"]["original"],
+        )
+        logger.info(
+            "project_upload_saved",
+            extra={
+                "project_name": project_name,
+                "storage_path": str(layout["folders"]["root"]),
+                "saved_files": [str(p) for p in saved_files],
+                "saved_size_bytes": sum(p.stat().st_size for p in saved_files if p.exists()),
+            },
+        )
+        return saved_files, layout
+
     async def create_project(
         self,
         file: UploadFile | None = None,

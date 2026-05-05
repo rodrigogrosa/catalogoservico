@@ -238,6 +238,23 @@ class ImportUrlRequest(BaseModel):
     project_name: str | None = None
 
 
+class UploadJobAccepted(BaseModel):
+    """Returned with HTTP 202 when an upload job is queued asynchronously."""
+    job_id: str
+    status: str = "queued"
+    poll_url: str
+
+
+class JobStatusResponse(BaseModel):
+    """Returned by GET /projects/jobs/{job_id}."""
+    job_id: str
+    status: str                       # queued | processing | done | failed
+    project_id: str | None = None     # populated when status == "done"
+    error: str | None = None          # populated when status == "failed"
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
 class UpdateProjectRequest(BaseModel):
     name: str | None = None
     target_material: str | None = None

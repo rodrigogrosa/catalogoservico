@@ -726,6 +726,53 @@ export async function fetchProject(id: string): Promise<ProjectDetail> {
   return response.json();
 }
 
+// ---------------------------------------------------------------------------
+// Upload job types (async queue)
+// ---------------------------------------------------------------------------
+
+export type UploadJobStatus = {
+  job_id: string;
+  status: "queued" | "processing" | "done" | "failed" | string;
+  project_id?: string | null;
+  error?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export async function getUploadJobStatus(jobId: string): Promise<UploadJobStatus> {
+  const response = await apiFetchResilient(`/projects/jobs/${jobId}`, {
+    cache: "no-store",
+    headers: authHeaders(),
+  });
+  if (!response.ok) throw await parseApiError(response, "Falha ao consultar job");
+  return response.json();
+}
+
+/**
+ * Poll GET /projects/jobs/{jobId} until status is "done" or "failed".
+ * Calls onStatus on each poll. Throws on failure or timeout.
+ */
+async function pollUploadJob(
+  jobId: string,
+  onStatus?: (status: UploadJobStatus) => void,
+  intervalMs = 1500,
+  maxWaitMs = 10 * 60 * 1000,
+): Promise<ProjectDetail> {
+  const deadline = Date.now() + maxWaitMs;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, intervalMs));
+    const status = await getUploadJobStatus(jobId);
+    onStatus?.(status);
+    if (status.status === "done" && status.project_id) {
+      return fetchProject(status.project_id);
+    }
+    if (status.status === "failed") {
+      throw new Error(status.error ?? "Processamento falhou no servidor.");
+    }
+  }
+  throw new Error("Tempo esgotado aguardando o processamento do projeto.");
+}
+
 export async function uploadProject(files: File[], projectName?: string): Promise<ProjectDetail> {
   const form = new FormData();
   files.forEach((file) => form.append("files", file));
@@ -737,6 +784,10 @@ export async function uploadProject(files: File[], projectName?: string): Promis
   });
   if (!response.ok) {
     throw await parseApiError(response, "Falha ao subir arquivo");
+  }
+  if (response.status === 202) {
+    const job = (await response.json()) as { job_id: string };
+    return pollUploadJob(job.job_id);
   }
   return response.json();
 }
@@ -775,7 +826,24 @@ export function uploadProjectWithProgress(
     };
 
     xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
+      if (xhr.status === 202) {
+        // Async job queued — switch to polling phase
+        if (onProcessing) onProcessing();
+        try {
+          const body = JSON.parse(xhr.responseText) as { job_id: string };
+          pollUploadJob(
+            body.job_id,
+            (status) => {
+              // Keep progress indicator alive during polling
+              if (status.status === "processing") onProgress(99);
+            },
+          )
+            .then(resolve)
+            .catch(reject);
+        } catch {
+          reject(new Error("Resposta inválida do servidor (202)."));
+        }
+      } else if (xhr.status >= 200 && xhr.status < 300) {
         try {
           resolve(JSON.parse(xhr.responseText) as ProjectDetail);
         } catch {
@@ -837,6 +905,10 @@ export async function importProjectFromUrl(url: string, projectName?: string): P
   });
   if (!response.ok) {
     throw await parseApiError(response, "Falha ao importar link");
+  }
+  if (response.status === 202) {
+    const job = (await response.json()) as { job_id: string };
+    return pollUploadJob(job.job_id);
   }
   return response.json();
 }

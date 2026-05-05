@@ -7,8 +7,11 @@ from fastapi.responses import StreamingResponse
 
 from app.core.auth import require_current_user_or_query_token, require_permission
 from app.schemas.auth import AuthUser
+from fastapi.responses import JSONResponse
+
 from app.schemas.project import (
     ImportUrlRequest,
+    JobStatusResponse,
     ProcessProjectRequest,
     ProjectBundleResponse,
     ProjectPrintFileResponse,
@@ -17,9 +20,11 @@ from app.schemas.project import (
     ProjectListResponse,
     ProjectSummary,
     UpdateProjectRequest,
+    UploadJobAccepted,
 )
 from app.services.dependencies import get_project_service
 from app.services.project_service import ProjectService
+from app.services import upload_queue as uq
 
 
 router = APIRouter()
@@ -163,13 +168,41 @@ async def stream_project_progress(
     )
 
 
-@router.post("/upload", response_model=ProjectDetailResponse)
+@router.get("/jobs/{job_id}", response_model=JobStatusResponse)
+async def get_upload_job(
+    job_id: str,
+    current_user: AuthUser = Depends(require_permission("projects.create")),
+) -> JobStatusResponse:
+    """Poll the status of an async upload job."""
+    data = uq.get_job_status(job_id)
+    if data is None:
+        raise HTTPException(status_code=404, detail="Job não encontrado.")
+    return JobStatusResponse(
+        job_id=job_id,
+        status=data.get("status", "unknown"),
+        project_id=data.get("project_id") or None,
+        error=data.get("error") or None,
+        created_at=data.get("created_at") or None,
+        updated_at=data.get("updated_at") or None,
+    )
+
+
+@router.post("/upload")
 async def upload_project(
     files: list[UploadFile] = File(...),
     project_name: str | None = Form(default=None),
     service: ProjectService = Depends(get_project_service),
     current_user: AuthUser = Depends(require_permission("projects.create")),
-) -> ProjectDetailResponse:
+):
+    """Upload one or more project files.
+
+    When Redis is available the job is queued asynchronously and the endpoint
+    returns HTTP 202 with a ``job_id`` for polling via GET /projects/jobs/{job_id}.
+    When Redis is not configured (local dev without REDIS_URL) the upload is
+    processed synchronously and the full ProjectDetailResponse is returned (HTTP 200).
+    """
+    import uuid  # noqa: PLC0415
+
     logger.info(
         "project_upload_requested",
         extra={
@@ -180,17 +213,57 @@ async def upload_project(
         },
     )
     try:
-        return await service.create_project(file=None, files=files, requested_name=project_name)
+        # Always save files to disk first — fast local I/O, keeps the binary out of Redis.
+        saved_files, layout = await service.save_upload_files(files, project_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    job_id = uuid.uuid4().hex
+    payload = {
+        "type": "upload",
+        "job_id": job_id,
+        "project_name": layout.get("version_name", project_name or "projeto-3d"),
+        "saved_files": [str(p) for p in saved_files],
+        "layout": {
+            **{k: v for k, v in layout.items() if k != "folders"},
+            "folders": {k: str(v) for k, v in layout.get("folders", {}).items()},
+        },
+        "origin_url": None,
+    }
+    queued = uq.enqueue_upload_job(job_id, payload)
+    if queued:
+        poll_url = f"/api/v1/projects/jobs/{job_id}"
+        return JSONResponse(
+            status_code=202,
+            content=UploadJobAccepted(job_id=job_id, status="queued", poll_url=poll_url).model_dump(),
+        )
+    # Fallback: Redis unavailable — process synchronously
+    try:
+        result = await asyncio.to_thread(
+            service.create_project_from_saved_files,
+            saved_files,
+            layout,
+            layout.get("version_name", project_name or "projeto-3d"),
+            None,
+        )
+        return result
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@router.post("/import-url", response_model=ProjectDetailResponse)
+@router.post("/import-url")
 async def import_project_url(
     payload: ImportUrlRequest,
     service: ProjectService = Depends(get_project_service),
     current_user: AuthUser = Depends(require_permission("projects.create")),
-) -> ProjectDetailResponse:
+):
+    """Import a project from a direct download URL.
+
+    Returns HTTP 202 + job_id when Redis is available, or HTTP 200 + project
+    when running without Redis (synchronous fallback).
+    """
+    import uuid  # noqa: PLC0415
+
     logger.info(
         "project_import_url_requested",
         extra={
@@ -199,6 +272,21 @@ async def import_project_url(
             "url": payload.url,
         },
     )
+    job_id = uuid.uuid4().hex
+    job_payload = {
+        "type": "import_url",
+        "job_id": job_id,
+        "url": payload.url,
+        "project_name": payload.project_name or "",
+    }
+    queued = uq.enqueue_upload_job(job_id, job_payload)
+    if queued:
+        poll_url = f"/api/v1/projects/jobs/{job_id}"
+        return JSONResponse(
+            status_code=202,
+            content=UploadJobAccepted(job_id=job_id, status="queued", poll_url=poll_url).model_dump(),
+        )
+    # Fallback: process synchronously
     try:
         return await service.create_project_from_url(payload.url, requested_name=payload.project_name)
     except ValueError as exc:
