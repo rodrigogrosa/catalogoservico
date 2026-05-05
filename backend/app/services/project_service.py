@@ -819,6 +819,67 @@ class ProjectService:
 
         return ProjectDetailResponse(**manifest)
 
+    def add_preview_photo(self, project_id: str, filename: str, content: bytes) -> ProjectDetailResponse:
+        """Save an uploaded image file into the project's previews folder and return the refreshed project."""
+        manifest = self.storage.load_manifest(project_id)
+        if manifest is None:
+            raise ValueError("Projeto nao encontrado.")
+        slug = manifest.get("slug", "")
+        version_name = manifest.get("id", project_id)
+        previews_dir = self.settings.storage_root / slug / version_name / "previews"
+        previews_dir.mkdir(parents=True, exist_ok=True)
+        # Sanitise filename: keep stem, force .webp extension for consistency
+        safe_stem = "".join(c if c.isalnum() or c in "-_." else "_" for c in filename.rsplit(".", 1)[0])[:80]
+        ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "jpg"
+        if ext not in ("jpg", "jpeg", "png", "webp"):
+            ext = "jpg"
+        dest = previews_dir / f"{safe_stem}.{ext}"
+        # Avoid overwrite — append suffix if needed
+        counter = 1
+        while dest.exists():
+            dest = previews_dir / f"{safe_stem}_{counter}.{ext}"
+            counter += 1
+        dest.write_bytes(content)
+        refreshed = self.get_project(project_id)
+        return refreshed if refreshed is not None else ProjectDetailResponse(**manifest)
+
+    def delete_preview_photo(self, project_id: str, relative_path: str) -> ProjectDetailResponse:
+        """Delete a preview photo from disk and return the refreshed project."""
+        manifest = self.storage.load_manifest(project_id)
+        if manifest is None:
+            raise ValueError("Projeto nao encontrado.")
+        # relative_path looks like /storage/{slug}/{version}/previews/{filename}
+        # Resolve against storage_root safely (guard against path traversal)
+        if not relative_path.startswith("/storage/"):
+            raise ValueError("Caminho invalido.")
+        inner = relative_path[len("/storage/"):]
+        target = (self.settings.storage_root / inner).resolve()
+        storage_root_resolved = self.settings.storage_root.resolve()
+        if not str(target).startswith(str(storage_root_resolved)):
+            raise ValueError("Caminho fora da raiz de armazenamento.")
+        if target.exists() and target.is_file():
+            target.unlink()
+        # Also remove from manifest previews list and photo_order / hidden_photo_paths
+        manifest_changed = False
+        if manifest.get("previews"):
+            manifest["previews"] = [p for p in manifest["previews"] if p.get("path") != relative_path]
+            manifest_changed = True
+        sp = manifest.get("sales_profile") or {}
+        if sp.get("photo_order"):
+            sp["photo_order"] = [p for p in sp["photo_order"] if p != relative_path]
+            manifest_changed = True
+        if sp.get("hidden_photo_paths"):
+            sp["hidden_photo_paths"] = [p for p in sp["hidden_photo_paths"] if p != relative_path]
+            manifest_changed = True
+        if manifest.get("preview_url") == relative_path:
+            manifest["preview_url"] = None
+            manifest_changed = True
+        if manifest_changed:
+            manifest["sales_profile"] = sp
+            self.storage.save_manifest(manifest)
+        refreshed = self.get_project(project_id)
+        return refreshed if refreshed is not None else ProjectDetailResponse(**manifest)
+
     def delete_project(self, project_id: str) -> bool:
         manifest = self.storage.load_manifest(project_id)
         if manifest is None:

@@ -6,9 +6,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
 import {
   buildPublicationDraft,
+  deletePreviewPhoto,
   fetchStores,
   fileUrl,
   updateProject,
+  uploadPreviewPhoto,
   updateStore,
   type ArtifactReference,
   type MarketplaceAttribute,
@@ -728,6 +730,7 @@ export function SalesProductDetail({ project }: Props) {
       <PhotoDownloadPanel
         photos={adPhotos}
         projectName={localProject.name}
+        projectId={localProject.id}
         editing={editing}
         labelOverrides={salesDraft?.photo_label_overrides ?? {}}
         hiddenPaths={salesDraft?.hidden_photo_paths ?? []}
@@ -753,6 +756,14 @@ export function SalesProductDetail({ project }: Props) {
           setSalesField("extra_ad_photos", arr);
         }}
         onReorder={(newOrder) => setSalesField("photo_order", newOrder)}
+        onUploadPhoto={(updated) => {
+          setLocalProject(updated);
+          setSalesDraft(JSON.parse(JSON.stringify(updated.sales_profile)) as SalesProfile);
+        }}
+        onDeletePhoto={(updated) => {
+          setLocalProject(updated);
+          setSalesDraft(JSON.parse(JSON.stringify(updated.sales_profile)) as SalesProfile);
+        }}
       />
 
       {/* ── Conteúdo dos Anúncios ─────────────────────────────────────────── */}
@@ -1122,6 +1133,7 @@ const MAX_AD_PHOTOS = 5;
 type PhotoDownloadPanelProps = {
   photos: AdPhoto[];
   projectName: string;
+  projectId: string;
   editing?: boolean;
   labelOverrides?: Record<string, string>;
   hiddenPaths?: string[];
@@ -1133,11 +1145,14 @@ type PhotoDownloadPanelProps = {
   onRemoveExtra?: (idx: number) => void;
   onUpdateExtra?: (idx: number, updates: Partial<SalesProfileExtraPhoto>) => void;
   onReorder?: (newOrderHrefs: string[]) => void;
+  onUploadPhoto?: (updated: ProjectDetail) => void;
+  onDeletePhoto?: (updated: ProjectDetail) => void;
 };
 
 function PhotoDownloadPanel({
   photos,
   projectName,
+  projectId,
   editing = false,
   labelOverrides = {},
   hiddenPaths = [],
@@ -1149,10 +1164,15 @@ function PhotoDownloadPanel({
   onRemoveExtra,
   onUpdateExtra,
   onReorder,
+  onUploadPhoto,
+  onDeletePhoto,
 }: PhotoDownloadPanelProps) {
   const [status, setStatus] = useState<string | null>(null);
   const [newPhotoUrl, setNewPhotoUrl] = useState("");
   const [newPhotoLabel, setNewPhotoLabel] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [deleting, setDeleting] = useState<string | null>(null);
+
 
   function movePhoto(idx: number, dir: -1 | 1) {
     const newIdx = idx + dir;
@@ -1160,6 +1180,52 @@ function PhotoDownloadPanel({
     const newOrder = photos.map((p) => p.href);
     [newOrder[idx], newOrder[newIdx]] = [newOrder[newIdx], newOrder[idx]];
     onReorder?.(newOrder);
+  }
+
+  function setAsPrincipal(idx: number) {
+    if (idx === 0) return;
+    const newOrder = photos.map((p) => p.href);
+    const [item] = newOrder.splice(idx, 1);
+    newOrder.unshift(item);
+    onReorder?.(newOrder);
+  }
+
+  async function handleFileUpload(file: File) {
+    setUploading(true);
+    setStatus("Enviando foto...");
+    try {
+      const updated = await uploadPreviewPhoto(projectId, file);
+      onUploadPhoto?.(updated);
+      setStatus("Foto adicionada!");
+      window.setTimeout(() => setStatus(null), 2000);
+    } catch {
+      setStatus("Erro ao enviar foto.");
+      window.setTimeout(() => setStatus(null), 3000);
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function handleDeletePhoto(photoHref: string) {
+    if (!photoHref.startsWith("/storage/")) {
+      // External URL — just remove from order/visibility
+      onHidePhoto?.(photoHref);
+      return;
+    }
+    if (!window.confirm("Excluir esta foto permanentemente do projeto?")) return;
+    setDeleting(photoHref);
+    setStatus("Excluindo...");
+    try {
+      const updated = await deletePreviewPhoto(projectId, photoHref);
+      onDeletePhoto?.(updated);
+      setStatus("Foto excluída.");
+      window.setTimeout(() => setStatus(null), 2000);
+    } catch {
+      setStatus("Erro ao excluir foto.");
+      window.setTimeout(() => setStatus(null), 3000);
+    } finally {
+      setDeleting(null);
+    }
   }
 
   async function downloadPhoto(photo: AdPhoto) {
@@ -1202,11 +1268,29 @@ function PhotoDownloadPanel({
           <h2 className="mt-2 text-2xl font-semibold text-slate-950">Imagens prontas para marketplace</h2>
           <p className="mt-2 text-sm leading-6 text-slate-600">
             {editing
-              ? "Edite o rótulo, exclua ou adicione fotos extras por URL. As alterações são salvas junto com a ficha."
+              ? "Reordene, exclua ou adicione fotos. A primeira foto (Principal) é a destaque do card e a primeira foto enviada ao ML."
               : "Baixe a imagem principal e os previews gerados para usar no Mercado Livre, Shopee, Instagram e catálogo próprio."}
           </p>
         </div>
-        {status ? <span className="pill">{status}</span> : <span className="pill">{photos.length} imagens</span>}
+        <div className="flex items-center gap-3">
+          {status ? <span className="pill">{status}</span> : <span className="pill">{photos.length} imagens</span>}
+          {editing ? (
+            <label className={`cursor-pointer rounded-full bg-blue-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-800 ${uploading ? "opacity-50 pointer-events-none" : ""}`}>
+              {uploading ? "Enviando..." : "+ Enviar foto"}
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                className="hidden"
+                disabled={uploading}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleFileUpload(file);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+          ) : null}
+        </div>
       </div>
 
       {/* ── Active photos ─────────────────────────────────────────────── */}
@@ -1253,11 +1337,12 @@ function PhotoDownloadPanel({
                       </button>
                       <button
                         type="button"
-                        title="Excluir esta foto do anúncio"
-                        onClick={() => onHidePhoto?.(photo.href)}
-                        className="rounded-full bg-red-600 px-2 py-1 text-xs font-semibold text-white shadow hover:bg-red-700"
+                        title="Excluir esta foto permanentemente"
+                        disabled={deleting === photo.href}
+                        onClick={() => handleDeletePhoto(photo.href)}
+                        className="rounded-full bg-red-600 px-2 py-1 text-xs font-semibold text-white shadow hover:bg-red-700 disabled:opacity-50"
                       >
-                        ✕
+                        🗑
                       </button>
                     </div>
                   </>
@@ -1283,6 +1368,15 @@ function PhotoDownloadPanel({
                     <h3 className="mt-1 text-sm font-semibold text-slate-950">{photo.label}</h3>
                   )}
                 </div>
+                {editing && index !== 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => setAsPrincipal(index)}
+                    className="w-full rounded-full border border-orange-400 py-2 text-xs font-semibold text-orange-700 hover:bg-orange-50"
+                  >
+                    Definir como Principal
+                  </button>
+                ) : null}
                 {!editing ? (
                   <>
                     <button
@@ -1308,7 +1402,7 @@ function PhotoDownloadPanel({
         </div>
       )}
 
-      {/* hidden photos are excluded from display; no restore UI — cancel editing reverts all */}
+      {/* Deleted photos are removed from disk; cancel editing reverts order/label changes only */}
 
       {/* ── Extra photos (user-added) ──────────────────────────────────── */}
       {extraPhotos.length > 0 ? (

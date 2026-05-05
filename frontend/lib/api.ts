@@ -868,6 +868,27 @@ export async function updateProject(id: string, payload: UpdateProjectPayload): 
   return response.json();
 }
 
+export async function uploadPreviewPhoto(projectId: string, file: File): Promise<ProjectDetail> {
+  const form = new FormData();
+  form.append("file", file);
+  const response = await apiFetchResilient(`/projects/${projectId}/previews/upload`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: form,
+  });
+  if (!response.ok) throw await parseApiError(response, "Falha ao enviar foto");
+  return response.json();
+}
+
+export async function deletePreviewPhoto(projectId: string, photoPath: string): Promise<ProjectDetail> {
+  const response = await apiFetchResilient(
+    `/projects/${projectId}/previews?path=${encodeURIComponent(photoPath)}`,
+    { method: "DELETE", headers: authHeaders() },
+  );
+  if (!response.ok) throw await parseApiError(response, "Falha ao excluir foto");
+  return response.json();
+}
+
 export async function backfillCatalog(): Promise<{ fixed: number; skipped: number; errors: string[] }> {
   const response = await apiFetchResilient("/projects/backfill-catalog", {
     method: "POST",

@@ -83,6 +83,39 @@ async def update_project(
     return result
 
 
+@router.post("/{project_id}/previews/upload", response_model=ProjectDetailResponse)
+async def upload_preview_photo(
+    project_id: str,
+    file: UploadFile = File(...),
+    service: ProjectService = Depends(get_project_service),
+    current_user: AuthUser = Depends(require_permission("projects.process")),
+) -> ProjectDetailResponse:
+    """Upload a new photo file directly into the project's previews folder."""
+    logger.info("preview_upload_requested", extra={"username": current_user.username, "project_id": project_id})
+    content = await file.read()
+    if len(content) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Arquivo muito grande. Máximo 20 MB.")
+    try:
+        return service.add_preview_photo(project_id, file.filename or "photo.jpg", content)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.delete("/{project_id}/previews", response_model=ProjectDetailResponse)
+async def delete_preview_photo(
+    project_id: str,
+    path: str = Query(..., description="Caminho relativo da foto, ex: /storage/slug/id/previews/foto.jpg"),
+    service: ProjectService = Depends(get_project_service),
+    current_user: AuthUser = Depends(require_permission("projects.process")),
+) -> ProjectDetailResponse:
+    """Delete a preview photo from disk and remove it from the project manifest."""
+    logger.info("preview_delete_requested", extra={"username": current_user.username, "project_id": project_id, "path": path})
+    try:
+        return service.delete_preview_photo(project_id, path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.post("/backfill-catalog", response_model=dict)
 async def backfill_catalog(
     service: ProjectService = Depends(get_project_service),
